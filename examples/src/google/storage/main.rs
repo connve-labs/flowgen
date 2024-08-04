@@ -1,11 +1,7 @@
-use flowgen::google;
-use flowgen::google::storage::v2::{storage_client::StorageClient, ListBucketsRequest};
+use flowgen_google::storage::v2::{storage_client::StorageClient, ListBucketsRequest};
 use gcp_auth::{CustomServiceAccount, TokenProvider};
 use std::path::PathBuf;
-use tonic::{
-    metadata::MetadataValue,
-    transport::{Certificate, ClientTlsConfig},
-};
+use tonic::{metadata::MetadataValue, transport::ClientTlsConfig};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -16,16 +12,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|_| "GCP_CREDENTIALS are required.".to_string())?;
 
     // Setup required config for the http client.
-    let pem = tokio::fs::read("/etc/ssl/cert.pem")
-        .await
-        .expect("No cert file found");
-    let cert = Certificate::from_pem(pem);
-    let tls_config = ClientTlsConfig::new().ca_certificate(Certificate::from_pem(cert));
-    let channel = tonic::transport::Channel::from_static(google::storage::ENDPOINT)
+    let tls_config = ClientTlsConfig::new();
+    let channel = tonic::transport::Channel::from_static(flowgen_google::storage::ENDPOINT)
         .tls_config(tls_config)?
         .connect()
         .await?;
-
 
     // Authenticate do GCP Cloud.
     let credentials_path = PathBuf::from(gcp_credentials);
@@ -47,7 +38,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .insert("x-goog-request-params", x_goog.clone());
         Ok(req)
     });
-
 
     // List all buckets in the project.
     let list_buckets_resp = client

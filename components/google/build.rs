@@ -4,21 +4,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     tonic_build::configure()
         .build_client(true)
         .build_server(false)
-        .out_dir("src/google")
+        .out_dir("src")
         .compile(
             &["proto/googleapis/google/storage/v2/storage.proto"],
             &["proto/googleapis"],
-        )?;
-
-    // Salesforce PubSub.
-    // https://github.com/forcedotcom/pub-sub-api
-    tonic_build::configure()
-        .build_client(true)
-        .build_server(false)
-        .out_dir("src/salesforce")
-        .compile(
-            &["proto/salesforce/pubsub/pubsub.proto"],
-            &["proto/salesforce/pubsub"],
         )?;
     Ok(())
 }

@@ -1,15 +1,9 @@
-use flowgen::salesforce;
-use flowgen::salesforce::eventbus::v1::{
-    pub_sub_client::PubSubClient, SchemaRequest, TopicRequest,
-};
+use flowgen_salesforce::eventbus::v1::{pub_sub_client::PubSubClient, SchemaRequest, TopicRequest};
 use oauth2::basic::BasicClient;
 use oauth2::reqwest::async_http_client;
 use oauth2::{AuthUrl, ClientId, ClientSecret, TokenResponse, TokenUrl};
 use std::env;
-use tonic::{
-    metadata::MetadataValue,
-    transport::{Certificate, ClientTlsConfig},
-};
+use tonic::{metadata::MetadataValue, transport::ClientTlsConfig};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -19,19 +13,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let sfdc_tenant_id = env!("SALESFORCE_TENANT_ID");
     let sfdc_topic_name = env!("SALESFORCE_TOPIC_NAME");
 
-    // Setup required config for the http client.
-    let pem = tokio::fs::read("/etc/ssl/cert.pem")
-        .await
-        .expect("No cert file found");
-    let cert = Certificate::from_pem(pem);
-    let tls_config = ClientTlsConfig::new().ca_certificate(Certificate::from_pem(cert));
-    let channel_endpoint = format!("{0}:443", salesforce::eventbus::GLOBAL_ENDPOINT).to_string();
+    let tls_config = ClientTlsConfig::new();
+    let channel_endpoint =
+        format!("{0}:443", flowgen_salesforce::eventbus::GLOBAL_ENDPOINT).to_string();
     let channel = tonic::transport::Channel::from_shared(channel_endpoint)?
         .tls_config(tls_config)?
         .connect()
         .await?;
 
-    let sfdc_client = salesforce::auth::Client::builder()
+    let sfdc_client = flowgen_salesforce::auth::Client::builder()
         .with_credetentials_path(sfdc_credentials.into())
         .build();
 
@@ -65,7 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }))
         .await?;
 
-    let schema_info = client
+    let _schema_info = client
         .get_schema(tonic::Request::new(SchemaRequest {
             schema_id: topic_resp.into_inner().schema_id,
         }))

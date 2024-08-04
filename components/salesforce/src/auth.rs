@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::env;
 use std::fs;
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
