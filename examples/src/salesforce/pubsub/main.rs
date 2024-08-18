@@ -21,9 +21,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .connect()
         .await?;
 
-    let sfdc_client = flowgen_salesforce::auth::Client::builder()
-        .with_credetentials_path(sfdc_credentials.into())
-        .build();
+    let sfdc_client = flowgen_salesforce::auth::Client::new()
+        .with_credentials_path(sfdc_credentials.to_string())
+        .build()
+        .unwrap();
 
     let auth_client = BasicClient::new(
         ClientId::new(sfdc_client.client_id),

@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Client {
     pub client_id: String,
     pub client_secret: String,
@@ -10,26 +10,28 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn builder() -> Builder {
-        Builder::default()
+    pub fn new() -> ClientBuilder {
+        ClientBuilder::default()
+    }
+    pub fn connect(&self) -> Result<(), Box<dyn std::error::Error>> {
+        Ok(())
     }
 }
 
 #[derive(Default)]
-pub struct Builder {
+pub struct ClientBuilder {
     credentials_path: String,
 }
 
-impl Builder {
-    pub fn with_credetentials_path(&mut self, credentials_path: String) -> &mut Self {
+impl ClientBuilder {
+    pub fn with_credentials_path(mut self, credentials_path: String) -> ClientBuilder {
         self.credentials_path = credentials_path;
         self
     }
 
-    pub fn build(&self) -> Client {
-        let creds = fs::read_to_string(&self.credentials_path)
-            .expect("Should have been able to read the file");
-        let client: Client = serde_json::from_str(&creds).unwrap();
-        client
+    pub fn build(self) -> Result<Client, Box<dyn std::error::Error>> {
+        let creds = fs::read_to_string(&self.credentials_path)?;
+        let client: Client = serde_json::from_str(&creds)?;
+        Ok(client)
     }
 }
