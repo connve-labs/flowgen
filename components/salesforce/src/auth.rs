@@ -7,18 +7,26 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 
 #[derive(Debug, Serialize, Deserialize)]
+/// Used to store Salesforce Client credentials.
 pub struct Client {
+    /// Client ID from connected apps.
     pub client_id: String,
+    /// Client Secret from connected apps.
     pub client_secret: String,
+    /// Intance URL eg. httsp://mydomain.salesforce.com.
     pub instance_url: String,
+    /// Tenant/org id from company info.
     pub tenant_id: String,
 }
 
 impl Client {
     #[allow(clippy::new_ret_no_self)]
+    /// Creates a new instance of a ClientBuilder.
     pub fn new() -> ClientBuilder {
         ClientBuilder::default()
     }
+    /// Authorizes to Salesforce based on provided credentials.
+    /// It then exchanges them for auth_token and refresh_token or returns error.
     pub async fn connect(
         &self,
     ) -> Result<
@@ -48,16 +56,20 @@ impl Client {
 }
 
 #[derive(Default)]
+/// Used to store Salesforce Client configuration.
 pub struct ClientBuilder {
     credentials_path: String,
 }
 
 impl ClientBuilder {
+    /// Pass path to the fail so that credentials can be loaded.
     pub fn with_credentials_path(&mut self, credentials_path: String) -> &mut Self {
         self.credentials_path = credentials_path;
         self
     }
 
+    /// Generates a new client or return error in case
+    /// provided credentials path is not valid.
     pub fn build(&mut self) -> Result<Client, Box<dyn std::error::Error>> {
         let creds = fs::read_to_string(&self.credentials_path)?;
         let client: Client = serde_json::from_str(&creds)?;
