@@ -1,7 +1,7 @@
 use flowgen_google::storage::v2::{storage_client::StorageClient, ListBucketsRequest};
 use gcp_auth::{CustomServiceAccount, TokenProvider};
 use std::path::PathBuf;
-use tonic::metadata::MetadataValue;
+use tonic::{metadata::AsciiMetadataValue, Request};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -26,23 +26,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Setup required request headers.
     let bearer_token = format!("Bearer {:?}", token.as_str());
-    let auth_header: MetadataValue<_> = bearer_token.parse()?;
+    let auth_header: AsciiMetadataValue = bearer_token.parse()?;
     let project_path = format!("projects/{0}", project_id);
-    let x_goog: MetadataValue<_> = format!("project={0}", project_path).parse()?;
+    let x_goog: AsciiMetadataValue = format!("project={0}", project_path).parse()?;
 
     // Setup Storage Client.
-    let mut client =
-        StorageClient::with_interceptor(flowgen_client, move |mut req: tonic::Request<()>| {
-            req.metadata_mut()
-                .insert("authorization", auth_header.clone());
-            req.metadata_mut()
-                .insert("x-goog-request-params", x_goog.clone());
-            Ok(req)
-        });
+    let mut client = StorageClient::with_interceptor(flowgen_client, move |mut req: Request<()>| {
+        req.metadata_mut()
+            .insert("authorization", auth_header.clone());
+        req.metadata_mut()
+            .insert("x-goog-request-params", x_goog.clone());
+        Ok(req)
+    });
 
     // List all buckets in the project.
     let list_buckets_resp = client
-        .list_buckets(tonic::Request::new(ListBucketsRequest {
+        .list_buckets(Request::new(ListBucketsRequest {
             parent: project_path,
             ..Default::default()
         }))

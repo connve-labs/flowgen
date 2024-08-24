@@ -1,7 +1,7 @@
 use flowgen_salesforce::eventbus::v1::{pub_sub_client::PubSubClient, SchemaRequest, TopicRequest};
 use oauth2::TokenResponse;
 use std::env;
-use tonic::metadata::AsciiMetadataValue;
+use tonic::{metadata::AsciiMetadataValue, Request};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -11,10 +11,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Setup Flowgen client.
     let flowgen_client = flowgen::core::Client::new()
-        .with_endpoint(format!(
-            "{0}:443",
-            flowgen_salesforce::eventbus::GLOBAL_ENDPOINT
-        ))
+        .with_endpoint(format!("{0}:443", flowgen_salesforce::eventbus::ENDPOINT))
         .build()?
         .connect()
         .await?;
@@ -36,7 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Setup Salesforce grpc client for PubSub.
     let mut sfdc_grpc_client =
-        PubSubClient::with_interceptor(flowgen_client, move |mut req: tonic::Request<()>| {
+        PubSubClient::with_interceptor(flowgen_client, move |mut req: Request<()>| {
             req.metadata_mut()
                 .insert("accesstoken", auth_header.clone());
             req.metadata_mut().insert("instanceurl", iu.clone());
@@ -46,7 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Get a concrete PubSub topic.
     let topic_resp = sfdc_grpc_client
-        .get_topic(tonic::Request::new(TopicRequest {
+        .get_topic(Request::new(TopicRequest {
             topic_name: String::from(sfdc_topic_name),
         }))
         .await?;
@@ -55,7 +52,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Get PubSub schema info for a provided topic.
     let schema_info = sfdc_grpc_client
-        .get_schema(tonic::Request::new(SchemaRequest {
+        .get_schema(Request::new(SchemaRequest {
             schema_id: topic_resp.into_inner().schema_id,
         }))
         .await?
