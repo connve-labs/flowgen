@@ -38,6 +38,7 @@ pub struct TopicRequest {
 /// Header that contains information for distributed tracing, filtering, routing, etc.
 /// For example, X-B3-* headers assigned by a publisher are stored with the event and
 /// can provide a full distributed trace of the event across its entire lifecycle.
+#[derive(serde::Serialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct EventHeader {
@@ -48,6 +49,7 @@ pub struct EventHeader {
 }
 ///
 /// Represents an event that an event publishing app creates.
+#[derive(serde::Serialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ProducerEvent {
