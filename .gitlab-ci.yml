@@ -1,19 +1,15 @@
 stages:
-  - test
+  - build
 
 rust-latest:
-  stage: test
+  stage: build
   image: rust:latest
   script:
-    - apt update -qq
-    - apt-get -qq install pkg-config libssl-dev protobuf-compiler
-    - cargo test --verbose
+    - ./scripts/build.sh
 
 rust-nightly:
-  stage: test
+  stage: build
   image: rustlang/rust:nightly
   script:
-    - apt update -qq
-    - apt-get -qq install pkg-config libssl-dev protobuf-compiler
-    - cargo test --verbose
+    - ./scripts/build.sh
   allow_failure: true
