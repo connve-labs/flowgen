@@ -23,6 +23,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .connect()
         .await?;
 
+    // Get PubSub context.
     let mut pubsub = flowgen_salesforce::pubsub::ContextBuilder::new(flowgen)
         .with_client(sfdc_client)
         .build()?;
@@ -32,7 +33,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .get_topic(TopicRequest {
             topic_name: sfdc_topic_name.to_string(),
         })
-        .await?;
+        .await?
+        .into_inner();
 
     println!("{:?}", topic);
 
@@ -41,7 +43,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .get_schema(SchemaRequest {
             schema_id: topic.schema_id,
         })
-        .await?;
+        .await?
+        .into_inner();
 
     println!("{:?}", schema_info);
 
@@ -52,28 +55,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             num_requested: 1,
             ..Default::default()
         })
-        .await?;
+        .await?
+        .into_inner();
 
     // Setup channel.
     let (tx, mut rx) = mpsc::channel(1);
     tokio::spawn(async move {
         while let Some(received) = stream.next().await {
-            match received {
-                Ok(fr) => {
-                    let ce_ops = fr.events.into_iter().next();
-                    if let Some(ce) = ce_ops {
-                        let pe_ops = ce.event;
-                        if let Some(pe) = pe_ops {
-                            if let Err(err) = tx.send(pe).await {
-                                // error!("{:?}", err);
-                            }
-                        }
-                    }
-                }
-                Err(err) => {
-                    // error!("{:?}", err)
-                }
-            }
+            let event = received
+                .unwrap()
+                .events
+                .into_iter()
+                .next()
+                .unwrap()
+                .event
+                .unwrap();
+            tx.send(event).await.unwrap();
         }
     });
 

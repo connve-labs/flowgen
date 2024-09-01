@@ -2,7 +2,6 @@
 /// License, v. 2.0. If a copy of the MPL was not distributed with this
 /// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 use oauth2::basic::{BasicClient, BasicErrorResponseType, BasicTokenType};
-
 use oauth2::reqwest::async_http_client;
 use oauth2::{
     AuthUrl, ClientId, ClientSecret, EmptyExtraTokenFields, RevocationErrorResponseType,
@@ -24,8 +23,8 @@ pub enum Error {
     #[error("Other Auth error")]
     NotCategorized(#[source] Box<dyn std::error::Error>),
 }
-#[derive(Debug, Serialize, Deserialize)]
 /// Used to store Salesforce Client credentials.
+#[derive(Serialize, Deserialize)]
 struct Credentials {
     /// Client ID from connected apps.
     client_id: String,

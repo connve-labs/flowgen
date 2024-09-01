@@ -1,8 +1,8 @@
-use crate::eventbus::v1::pub_sub_client::PubSubClient;
-use crate::{auth, eventbus};
 /// This Source Code Form is subject to the terms of the Mozilla Public
 /// License, v. 2.0. If a copy of the MPL was not distributed with this
 /// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+use crate::eventbus::v1::pub_sub_client::PubSubClient;
+use crate::{auth, eventbus};
 use oauth2::TokenResponse;
 use tokio_stream::StreamExt;
 
@@ -12,10 +12,12 @@ pub enum Error {
     ClientMissing(),
     #[error("TokenResponse is missing")]
     TokenResponseMissing(),
+    #[error("Service channel is missing")]
+    ServiceChannelMissing(),
     #[error("Invalid metadata value")]
     InvalidMetadataValue(#[source] tonic::metadata::errors::InvalidMetadataValue),
-    #[error("There was an error with gRPC call")]
-    GrpcStatus(#[source] tonic::Status),
+    #[error("There was an error with RPC call")]
+    RPCFailed(#[source] tonic::Status),
 }
 
 struct ContextInterceptor {
@@ -58,40 +60,35 @@ fn fetch_requests_iter(
 }
 
 impl Context {
-    #[allow(clippy::new_ret_no_self)]
     pub async fn get_topic(
         &mut self,
         request: eventbus::v1::TopicRequest,
-    ) -> Result<eventbus::v1::TopicInfo, Error> {
+    ) -> Result<tonic::Response<eventbus::v1::TopicInfo>, Error> {
         self.pubsub
             .get_topic(tonic::Request::new(request))
             .await
-            .map_err(Error::GrpcStatus)
-            .map(|response| response.into_inner())
+            .map_err(Error::RPCFailed)
     }
     pub async fn get_schema(
         &mut self,
         request: eventbus::v1::SchemaRequest,
-    ) -> Result<eventbus::v1::SchemaInfo, Error> {
+    ) -> Result<tonic::Response<eventbus::v1::SchemaInfo>, Error> {
         self.pubsub
             .get_schema(tonic::Request::new(request))
             .await
-            .map_err(Error::GrpcStatus)
-            .map(|response| response.into_inner())
+            .map_err(Error::RPCFailed)
     }
 
     pub async fn subscribe(
         &mut self,
         request: eventbus::v1::FetchRequest,
-    ) -> Result<tonic::codec::Streaming<eventbus::v1::FetchResponse>, Error> {
+    ) -> Result<tonic::Response<tonic::codec::Streaming<eventbus::v1::FetchResponse>>, Error> {
         self.pubsub
             .subscribe(fetch_requests_iter(request).throttle(std::time::Duration::from_millis(100)))
             .await
-            .map_err(Error::GrpcStatus)
-            .map(|response| response.into_inner())
+            .map_err(Error::RPCFailed)
     }
 }
-#[derive(Debug)]
 /// Used to store configure PubSub Context.
 pub struct ContextBuilder {
     client: Option<auth::Client>,
@@ -99,6 +96,7 @@ pub struct ContextBuilder {
 }
 
 impl ContextBuilder {
+    // Creates a new instance of ContectBuilder.
     pub fn new(service: flowgen::core::Service) -> Self {
         ContextBuilder {
             client: None,
@@ -140,8 +138,13 @@ impl ContextBuilder {
             tenant_id,
         };
 
-        let pubsub =
-            PubSubClient::with_interceptor(self.service.channel.clone().unwrap(), interceptor);
+        let pubsub = PubSubClient::with_interceptor(
+            self.service
+                .channel
+                .to_owned()
+                .ok_or_else(Error::ServiceChannelMissing)?,
+            interceptor,
+        );
 
         Ok(Context { pubsub })
     }
