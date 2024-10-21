@@ -399,8 +399,8 @@ impl ReplayPreset {
 /// Generated client implementations.
 pub mod pub_sub_client {
     #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
-    use tonic::codegen::http::Uri;
     use tonic::codegen::*;
+    use tonic::codegen::http::Uri;
     ///
     /// The Pub/Sub API provides a single interface for publishing and subscribing to platform events, including real-time
     /// event monitoring events, and change data capture events. The Pub/Sub API is a gRPC API that is based on HTTP/2.
@@ -461,8 +461,9 @@ pub mod pub_sub_client {
                     <T as tonic::client::GrpcService<tonic::body::BoxBody>>::ResponseBody,
                 >,
             >,
-            <T as tonic::codegen::Service<http::Request<tonic::body::BoxBody>>>::Error:
-                Into<StdError> + Send + Sync,
+            <T as tonic::codegen::Service<
+                http::Request<tonic::body::BoxBody>,
+            >>::Error: Into<StdError> + Send + Sync,
         {
             PubSubClient::new(InterceptedService::new(inner, interceptor))
         }
@@ -529,14 +530,19 @@ pub mod pub_sub_client {
             tonic::Response<tonic::codec::Streaming<super::FetchResponse>>,
             tonic::Status,
         > {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::new(
-                    tonic::Code::Unknown,
-                    format!("Service was not ready: {}", e.into()),
-                )
-            })?;
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static("/eventbus.v1.PubSub/Subscribe");
+            let path = http::uri::PathAndQuery::from_static(
+                "/eventbus.v1.PubSub/Subscribe",
+            );
             let mut req = request.into_streaming_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("eventbus.v1.PubSub", "Subscribe"));
@@ -547,14 +553,19 @@ pub mod pub_sub_client {
             &mut self,
             request: impl tonic::IntoRequest<super::SchemaRequest>,
         ) -> std::result::Result<tonic::Response<super::SchemaInfo>, tonic::Status> {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::new(
-                    tonic::Code::Unknown,
-                    format!("Service was not ready: {}", e.into()),
-                )
-            })?;
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static("/eventbus.v1.PubSub/GetSchema");
+            let path = http::uri::PathAndQuery::from_static(
+                "/eventbus.v1.PubSub/GetSchema",
+            );
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("eventbus.v1.PubSub", "GetSchema"));
@@ -566,14 +577,19 @@ pub mod pub_sub_client {
             &mut self,
             request: impl tonic::IntoRequest<super::TopicRequest>,
         ) -> std::result::Result<tonic::Response<super::TopicInfo>, tonic::Status> {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::new(
-                    tonic::Code::Unknown,
-                    format!("Service was not ready: {}", e.into()),
-                )
-            })?;
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static("/eventbus.v1.PubSub/GetTopic");
+            let path = http::uri::PathAndQuery::from_static(
+                "/eventbus.v1.PubSub/GetTopic",
+            );
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("eventbus.v1.PubSub", "GetTopic"));
@@ -584,15 +600,23 @@ pub mod pub_sub_client {
         pub async fn publish(
             &mut self,
             request: impl tonic::IntoRequest<super::PublishRequest>,
-        ) -> std::result::Result<tonic::Response<super::PublishResponse>, tonic::Status> {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::new(
-                    tonic::Code::Unknown,
-                    format!("Service was not ready: {}", e.into()),
-                )
-            })?;
+        ) -> std::result::Result<
+            tonic::Response<super::PublishResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static("/eventbus.v1.PubSub/Publish");
+            let path = http::uri::PathAndQuery::from_static(
+                "/eventbus.v1.PubSub/Publish",
+            );
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("eventbus.v1.PubSub", "Publish"));
@@ -627,14 +651,19 @@ pub mod pub_sub_client {
             tonic::Response<tonic::codec::Streaming<super::PublishResponse>>,
             tonic::Status,
         > {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::new(
-                    tonic::Code::Unknown,
-                    format!("Service was not ready: {}", e.into()),
-                )
-            })?;
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static("/eventbus.v1.PubSub/PublishStream");
+            let path = http::uri::PathAndQuery::from_static(
+                "/eventbus.v1.PubSub/PublishStream",
+            );
             let mut req = request.into_streaming_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("eventbus.v1.PubSub", "PublishStream"));
@@ -649,19 +678,26 @@ pub mod pub_sub_client {
         /// This feature is part of an open beta release.
         pub async fn managed_subscribe(
             &mut self,
-            request: impl tonic::IntoStreamingRequest<Message = super::ManagedFetchRequest>,
+            request: impl tonic::IntoStreamingRequest<
+                Message = super::ManagedFetchRequest,
+            >,
         ) -> std::result::Result<
             tonic::Response<tonic::codec::Streaming<super::ManagedFetchResponse>>,
             tonic::Status,
         > {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::new(
-                    tonic::Code::Unknown,
-                    format!("Service was not ready: {}", e.into()),
-                )
-            })?;
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static("/eventbus.v1.PubSub/ManagedSubscribe");
+            let path = http::uri::PathAndQuery::from_static(
+                "/eventbus.v1.PubSub/ManagedSubscribe",
+            );
             let mut req = request.into_streaming_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("eventbus.v1.PubSub", "ManagedSubscribe"));

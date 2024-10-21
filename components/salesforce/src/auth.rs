@@ -20,8 +20,8 @@ pub enum Error {
     ParseCredentials(#[source] serde_json::Error),
     #[error("Cannot parse url")]
     ParseUrl(#[source] url::ParseError),
-    #[error("Other Auth error")]
-    NotCategorized(#[source] Box<dyn std::error::Error>),
+    #[error("Other error: {}", _0)]
+    Other(String),
 }
 /// Used to store Salesforce Client credentials.
 #[derive(Serialize, Deserialize)]
@@ -68,7 +68,7 @@ impl flowgen::client::Client for Client {
             .exchange_client_credentials()
             .request_async(async_http_client)
             .await
-            .map_err(|e| Error::NotCategorized(Box::new(e)))?;
+            .map_err(|e| Error::Other(e.to_string()))?;
 
         self.token_result = Some(token_result);
         Ok(self)
