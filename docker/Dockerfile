@@ -8,7 +8,7 @@ WORKDIR /app
 # Copy dependencies and install them.
 COPY ./ ./
 RUN mkdir .cargo
-RUN echo "[source.vendored-sources]\ndirectory = \"vendor\"\n\n[source.crates-io]\nreplace-with = \"vendored-sources\"" > .cargo/config
+RUN echo "[source.vendored-sources]\ndirectory = \"vendor\"\n\n[source.\"git+https://gitlab.com/connve/platform/flowgen.git\"]\ngit = \"https://gitlab.com/connve/platform/flowgen.git\"\nreplace-with = \"vendored-sources\"" > .cargo/config
 RUN apt update -qq
 RUN apt-get -qq install pkg-config libssl-dev protobuf-compiler
 RUN cargo build --release --bin $SERVICE_NAME
