@@ -1,3 +1,4 @@
+use super::config;
 use super::subscriber;
 use async_nats::jetstream::{context::Publish, kv, stream};
 use flowgen_core::client::Client;
@@ -49,26 +50,8 @@ pub enum ChannelMessage {
 }
 
 #[derive(Deserialize)]
-pub struct Salesforce {
-    pub credentials: String,
-    pub topic_list: Vec<String>,
-}
-
-#[derive(Deserialize)]
-pub struct Nats {
-    pub credentials: String,
-    pub host: String,
-    pub stream_name: String,
-    pub stream_description: Option<String>,
-    pub subjects: Vec<String>,
-    pub kv_bucket_name: String,
-    pub kv_bucket_description: String,
-}
-
-#[derive(Deserialize)]
 pub struct Service {
-    pub salesforce: Salesforce,
-    pub nats: Nats,
+    config: config::Flow,
 }
 
 impl Service {
@@ -82,9 +65,10 @@ impl Service {
             .await
             .map_err(Error::FlowgenService)?;
 
-        // Connect to Salesforce and get token response.
+        // Connect to Salesforce.
+        let config::Source::salesforce(source_config) = self.config.source;
         let sfdc_client = flowgen_salesforce::auth::Builder::new()
-            .with_credentials_path(self.salesforce.credentials.into())
+            .with_credentials_path(source_config.credentials.into())
             .build()
             .map_err(Error::FlowgenSalesforceAuth)?
             .connect()
@@ -104,17 +88,18 @@ impl Service {
         // let nats_client = async_nats::ConnectOptions::with_nkey(nats_seed)
         //     .connect(nats_host)
         //     .await?;
-        let nats_client = async_nats::connect(self.nats.host)
+        let config::Target::nats(target_config) = self.config.target;
+        let nats_client = async_nats::connect(target_config.host)
             .await
             .map_err(Error::NatsConnect)?;
         let nats_jetstream = async_nats::jetstream::new(nats_client);
 
         let stream_config = stream::Config {
-            name: self.nats.stream_name.clone(),
+            name: target_config.stream_name.clone(),
             retention: stream::RetentionPolicy::Limits,
             max_age: Duration::new(60 * 60 * 24 * 7, 0),
-            subjects: self.nats.subjects.clone(),
-            description: self.nats.stream_description.clone(),
+            subjects: target_config.subjects.clone(),
+            description: target_config.stream_description.clone(),
             ..Default::default()
         };
 
@@ -127,8 +112,8 @@ impl Service {
 
         let kv = nats_jetstream
             .create_key_value(kv::Config {
-                bucket: self.nats.kv_bucket_name,
-                description: self.nats.kv_bucket_description,
+                bucket: target_config.kv_bucket_name,
+                description: target_config.kv_bucket_description,
                 ..Default::default()
             })
             .await
@@ -138,7 +123,7 @@ impl Service {
         let mut async_task_list: Vec<JoinHandle<Result<(), Error>>> = Vec::new();
 
         // Subscribe to all topics from the config.
-        for topic in self.salesforce.topic_list {
+        for topic in source_config.topic_list {
             let pubsub = Arc::clone(&pubsub);
             let tx = Sender::clone(&tx);
             let topic = topic.clone();
