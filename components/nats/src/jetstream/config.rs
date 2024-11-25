@@ -1,6 +1,4 @@
-use serde::Deserialize;
-
-#[derive(Deserialize, Clone, Debug)]
+#[derive(serde::Deserialize, Clone, Debug)]
 pub struct Target {
     pub credentials: String,
     pub stream_name: String,

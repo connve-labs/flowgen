@@ -1,7 +1,6 @@
 use async_nats::jetstream::context::Publish;
 use flowgen::flow;
 use flowgen_salesforce::pubsub::eventbus::v1::TopicInfo;
-use flowgen_salesforce::pubsub::subscriber;
 use futures::future::TryJoinAll;
 use std::env;
 use std::process;
@@ -14,8 +13,6 @@ use tracing::Level;
 pub enum Error {
     #[error("There was an error deserializing data into binary format.")]
     Bincode(#[source] bincode::Error),
-    #[error("There was an error deserializing data into binary format.")]
-    Subscriber(#[source] subscriber::Error),
     #[error("Cannot execute async task")]
     TokioJoin(#[source] tokio::task::JoinError),
     #[error("Cannot execute async task")]
@@ -50,6 +47,7 @@ async fn main() {
     });
 }
 
+// Run an event relay service.
 async fn run(f: flowgen::flow::Flow) -> Result<(), Error> {
     if let Some(source) = f.source {
         match source {
@@ -67,6 +65,8 @@ async fn run(f: flowgen::flow::Flow) -> Result<(), Error> {
                             event!(name: "fetch_response", Level::INFO, rpc_id = fr.rpc_id);
                             for ce in fr.events {
                                 if let Some(pe) = ce.event {
+
+                                    // Relay events only if event_id is present.
                                     if !pe.id.is_empty() {
                                     event!(name: "event_consumed", Level::INFO, event_id = pe.id);
                                     

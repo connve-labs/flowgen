@@ -1,4 +1,6 @@
-use async_nats::jetstream::{self, stream::Config};
+use std::time::Duration;
+
+use async_nats::jetstream::stream::{Config, DiscardPolicy, RetentionPolicy};
 use flowgen_core::client::Client;
 
 #[derive(thiserror::Error, Debug)]
@@ -45,6 +47,10 @@ impl Builder {
                 name: self.config.stream_name.clone(),
                 description: self.config.stream_description,
                 subjects: self.config.subjects,
+                max_messages_per_subject: 1,
+                discard: DiscardPolicy::Old,
+                retention: RetentionPolicy::Limits,
+                max_age: Duration::new(60 * 60 * 24 * 7, 0),
                 ..Default::default()
             };
 
