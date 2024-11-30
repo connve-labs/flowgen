@@ -15,13 +15,16 @@ pub enum Error {
     CredentialsNotProvided(),
 }
 
+/// Default Nats Server host.
+const DEFAULT_NATS_HOST: &str = "localhost:4222";
+
 /// Used to store Nats Client credentials.
 #[derive(serde::Deserialize)]
 struct Credentials {
     /// nKey public key string.
     nkey: Option<String>,
-    /// Instance url.
-    host: String,
+    /// Optional host value, if not passed localhost:4222 will be used.
+    host: Option<String>,
 }
 
 #[derive(Debug)]
@@ -73,15 +76,20 @@ impl Builder {
             let credentials: Credentials =
                 serde_json::from_str(&credentials_string).map_err(Error::ParseCredentials)?;
 
-            let mut nats_connect_opts = async_nats::ConnectOptions::new();
-            if let Some(nkey) = credentials.nkey {
-                nats_connect_opts = async_nats::ConnectOptions::with_nkey(nkey);
+            let mut connect_options = async_nats::ConnectOptions::new();
+            if let Some(configured_nkey) = credentials.nkey {
+                connect_options = async_nats::ConnectOptions::with_nkey(configured_nkey);
+            }
+
+            let mut host = DEFAULT_NATS_HOST.to_string();
+            if let Some(configured_host) = credentials.host {
+                host = configured_host.clone();
             }
 
             Ok(Client {
-                connect_options: nats_connect_opts,
                 nats_client: None,
-                host: credentials.host,
+                connect_options,
+                host,
             })
         } else {
             Err(Error::CredentialsNotProvided())
