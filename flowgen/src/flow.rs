@@ -20,6 +20,7 @@ pub enum Error {
 #[allow(non_camel_case_types)]
 pub enum Source {
     salesforce_pubsub(flowgen_salesforce::pubsub::subscriber::Subscriber),
+    file(flowgen_file::subscriber::Subscriber),
 }
 
 #[allow(non_camel_case_types)]
@@ -59,6 +60,13 @@ impl Flow {
                         .await
                         .map_err(Error::FlowgenSalesforcePubSubSubscriberError)?;
                 self.source = Some(Source::salesforce_pubsub(subscriber));
+            }
+            config::Source::file(config) => {
+                let subscriber = flowgen_file::subscriber::Builder::new(config)
+                    .build()
+                    .await
+                    .unwrap();
+                self.source = Some(Source::file(subscriber));
             }
         }
 

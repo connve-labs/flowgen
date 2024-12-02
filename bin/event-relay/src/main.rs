@@ -1,6 +1,8 @@
 use async_nats::jetstream::context::Publish;
+use chrono::Utc;
 use flowgen::flow;
 use flowgen_salesforce::pubsub::eventbus::v1::TopicInfo;
+use futures::future::try_join_all;
 use futures::future::TryJoinAll;
 use std::env;
 use std::process;
@@ -15,12 +17,14 @@ pub const DEFAULT_TOPIC_NAME: &str = "/data/ChangeEvents";
 pub enum Error {
     #[error("There was an error deserializing data into binary format.")]
     Bincode(#[source] bincode::Error),
-    #[error("Cannot execute async task.")]
-    TokioJoin(#[source] tokio::task::JoinError),
     #[error("Failed to publish message in Nats Jetstream.")]
     NatsPublish(#[source] async_nats::jetstream::context::PublishError),
+    #[error("Cannot execute async task.")]
+    TokioJoin(#[source] tokio::task::JoinError),
     #[error("Failed to setup Salesforce PubSub as flow source.")]
     FlowgenSalesforcePubSubSubscriberError(#[source] flowgen_salesforce::pubsub::subscriber::Error),
+    #[error("Failed to setup Salesforce PubSub as flow source.")]
+    FlowgenFileSubscriberError(#[source] flowgen_file::subscriber::Error),
 }
 
 #[tokio::main]
@@ -55,11 +59,11 @@ async fn main() {
 async fn run(f: flowgen::flow::Flow) -> Result<(), Error> {
     if let Some(source) = f.source {
         match source {
-            flow::Source::salesforce_pubsub(source_subscriber) => {
-                let subscriber_task_list = source_subscriber
+            flow::Source::salesforce_pubsub(source) => {
+                let subscriber_task_list = source
                     .init()
                     .map_err(Error::FlowgenSalesforcePubSubSubscriberError)?;
-                let mut rx = source_subscriber.rx;
+                let mut rx = source.rx;
 
                 let mut topic_info_list: Vec<TopicInfo> = Vec::new();
                 let receiver_task_list: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
@@ -96,6 +100,7 @@ async fn run(f: flowgen::flow::Flow) -> Result<(), Error> {
                                     if topic_list.is_empty() {
                                         break;
                                     }
+
                                     // Setup nats subject and payload.
                                     let s = topic_list[0].topic_name.replace('/', ".").to_lowercase();
                                     let event_name = &s[1..];
@@ -135,7 +140,55 @@ async fn run(f: flowgen::flow::Flow) -> Result<(), Error> {
                     .map_err(Error::TokioJoin)?;
 
                 // Run all receiver tasks.
-                let _ = receiver_task_list.await.map_err(Error::TokioJoin)?;
+                try_join_all(vec![receiver_task_list])
+                    .await
+                    .map_err(Error::TokioJoin)?;
+            }
+            flow::Source::file(source) => {
+                let mut subscriber = source.init().map_err(Error::FlowgenFileSubscriberError)?;
+                subscriber
+                    .subscribe()
+                    .await
+                    .map_err(Error::FlowgenFileSubscriberError)?;
+
+                let mut rx = subscriber.rx;
+                let path = subscriber.path.clone();
+
+                let receiver_task_list: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
+                    while let Some(m) = rx.recv().await {
+                        // Setup nats subject and payload.
+                        let filename = path.split("/").last().unwrap();
+                        let timestamp = Utc::now().timestamp();
+                        let subject = format!(
+                            "event.{filename}.{timestamp}",
+                            filename = filename,
+                            timestamp = timestamp
+                        );
+
+                        // Publish an event.
+                        if let Some(target) = f.target.as_ref() {
+                            match target {
+                                flow::Target::nats_jetstream(context) => {
+                                    context
+                                        .jetstream
+                                        .send_publish(subject, Publish::build().payload(m.into()))
+                                        .await
+                                        .map_err(Error::NatsPublish)?
+                                        .await
+                                        .map_err(Error::NatsPublish)?;
+
+                                    rx.close();
+                                }
+                            }
+                        }
+                    }
+                    Ok(())
+                });
+
+                // Run all receiver tasks.
+                try_join_all(vec![receiver_task_list])
+                    .await
+                    .map_err(Error::TokioJoin)?;
             }
         }
     }

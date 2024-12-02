@@ -11,6 +11,7 @@ deltalake = { version = "0.21.0", features = ["datafusion"] }
 flowgen_core = { path = "../components/core" }
 flowgen_salesforce = { path = "../components/salesforce" }
 flowgen_nats = { path = "../components/nats" }
+flowgen_file = { path = "../components/file" }
 prost = "0.12.3"
 reqwest = { version = "0.11.23", features = ["json", "stream"] }
 serde = { version = "1.0.195", features = ["derive"] }
