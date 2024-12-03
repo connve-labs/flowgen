@@ -4,6 +4,7 @@ use flowgen::flow;
 use flowgen_salesforce::pubsub::eventbus::v1::TopicInfo;
 use futures::future::try_join_all;
 use futures::future::TryJoinAll;
+use glob::glob;
 use std::env;
 use std::process;
 use tokio::task::JoinHandle;
@@ -33,33 +34,33 @@ async fn main() {
     tracing_subscriber::fmt::init();
 
     // Setup environment variables
-    let config_path = env::var("CONFIG_PATH").expect("env variable CONFIG_PATH should be set");
+    let config_dir = env::var("CONFIG_DIR").expect("env variable CONFIG_DIR should be set");
+    let dir = format!("{path}/*.json", path = config_dir);
+    for config in glob(&dir).unwrap() {
+        let config_path = config.unwrap();
+        let f = flowgen::flow::Builder::new(config_path)
+            .build()
+            .unwrap_or_else(|err| {
+                error!("{:?}", err);
+                process::exit(1);
+            })
+            .init()
+            .await
+            .unwrap_or_else(|err| {
+                error!("{:?}", err);
+                process::exit(1);
+            });
 
-    // Run flowgen service with a provided config.
-    let f = flowgen::flow::Builder::new(config_path.into())
-        .build()
-        .unwrap_or_else(|err| {
+        run(f).await.unwrap_or_else(|err| {
             error!("{:?}", err);
             process::exit(1);
         })
-        .init()
-        .await
-        .unwrap_or_else(|err| {
-            error!("{:?}", err);
-            process::exit(1);
-        });
-
-    run(f).await.unwrap_or_else(|err| {
-        error!("{:?}", err);
-        process::exit(1);
-    });
+    }
 }
 
 // Run an event relay service.
 async fn run(f: flowgen::flow::Flow) -> Result<(), Error> {
     if let Some(source) = f.source {
-        let mut receiver_task_list: Vec<JoinHandle<Result<(), Error>>> = Vec::new();
-
         match source {
             flow::Source::salesforce_pubsub(source) => {
                 let subscriber_task_list = source
@@ -134,22 +135,19 @@ async fn run(f: flowgen::flow::Flow) -> Result<(), Error> {
                     Ok(())
                 });
 
-                receiver_task_list.push(receiver_task);
+                // Run all subscriber tasks.
+                subscriber_task_list
+                    .into_iter()
+                    .collect::<TryJoinAll<_>>()
+                    .await
+                    .map_err(Error::TokioJoin)?;
 
-                // // Run all subscriber tasks.
-                // subscriber_task_list
-                //     .into_iter()
-                //     .collect::<TryJoinAll<_>>()
-                //     .await
-                //     .map_err(Error::TokioJoin)?;
-
-                // Run all receiver tasks.
-                // try_join_all(vec![receiver_task_list])
-                //     .await
-                //     .map_err(Error::TokioJoin)?;
+                //Run all receiver tasks.
+                try_join_all(vec![receiver_task])
+                    .await
+                    .map_err(Error::TokioJoin)?;
             }
             flow::Source::file(source) => {
-                println!("{:?}", "here");
                 let mut subscriber = source.init().map_err(Error::FlowgenFileSubscriberError)?;
                 subscriber
                     .subscribe()
@@ -159,9 +157,8 @@ async fn run(f: flowgen::flow::Flow) -> Result<(), Error> {
                 let mut rx = subscriber.rx;
                 let path = subscriber.path.clone();
 
-                let mut receiver_task: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
+                let receiver_task: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
                     while let Some(m) = rx.recv().await {
-                        println!("{:?}", m);
                         // Setup nats subject and payload.
                         let filename = path.split("/").last().unwrap();
                         let timestamp = Utc::now().timestamp();
@@ -191,7 +188,6 @@ async fn run(f: flowgen::flow::Flow) -> Result<(), Error> {
                     Ok(())
                 });
 
-                // receiver_task_list.push(receiver_task);
                 //Run all receiver tasks.
                 try_join_all(vec![receiver_task])
                     .await

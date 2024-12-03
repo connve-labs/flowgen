@@ -2,7 +2,7 @@ use serde::Deserialize;
 
 #[derive(Deserialize, Clone)]
 pub struct Config {
-    pub flows: Vec<Flow>,
+    pub flow: Flow,
 }
 
 #[derive(Deserialize, Clone)]

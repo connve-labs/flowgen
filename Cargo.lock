@@ -1728,6 +1728,7 @@ dependencies = [
  "flowgen_salesforce",
  "futures",
  "futures-util",
+ "glob",
  "oauth2",
  "prost",
  "reqwest",

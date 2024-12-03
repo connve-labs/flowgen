@@ -51,39 +51,36 @@ impl Flow {
         // Get cloned version of the config.
         let config = self.config.clone();
 
-        for flow in config.flows {
-            // Setup source subscribers.
-            match flow.source {
-                config::Source::salesforce_pubsub(config) => {
-                    let subscriber = flowgen_salesforce::pubsub::subscriber::Builder::new(
-                        service.clone(),
-                        config,
-                    )
+        // Setup source subscribers.
+        match config.flow.source {
+            config::Source::salesforce_pubsub(config) => {
+                let subscriber =
+                    flowgen_salesforce::pubsub::subscriber::Builder::new(service.clone(), config)
+                        .build()
+                        .await
+                        .map_err(Error::FlowgenSalesforcePubSubSubscriberError)?;
+                self.source = Some(Source::salesforce_pubsub(subscriber));
+            }
+            config::Source::file(config) => {
+                let subscriber = flowgen_file::subscriber::Builder::new(config)
                     .build()
                     .await
-                    .map_err(Error::FlowgenSalesforcePubSubSubscriberError)?;
-                    self.source = Some(Source::salesforce_pubsub(subscriber));
-                }
-                config::Source::file(config) => {
-                    let subscriber = flowgen_file::subscriber::Builder::new(config)
-                        .build()
-                        .await
-                        .unwrap();
-                    self.source = Some(Source::file(subscriber));
-                }
-            }
-
-            // Setup target publishers.
-            match flow.target {
-                config::Target::nats_jetstream(config) => {
-                    let publisher = flowgen_nats::jetstream::context::Builder::new(config)
-                        .build()
-                        .await
-                        .map_err(Error::FlowgenNatsJetStreamContext)?;
-                    self.target = Some(Target::nats_jetstream(publisher));
-                }
+                    .unwrap();
+                self.source = Some(Source::file(subscriber));
             }
         }
+
+        // Setup target publishers.
+        match config.flow.target {
+            config::Target::nats_jetstream(config) => {
+                let publisher = flowgen_nats::jetstream::context::Builder::new(config)
+                    .build()
+                    .await
+                    .map_err(Error::FlowgenNatsJetStreamContext)?;
+                self.target = Some(Target::nats_jetstream(publisher));
+            }
+        }
+
         Ok(self)
     }
 }
