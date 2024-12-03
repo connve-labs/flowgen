@@ -48,11 +48,11 @@ impl Builder {
             }
 
             // Create or update stream according to config.
-            let stream_config = Config {
+            let mut stream_config = Config {
                 name: self.config.stream_name.clone(),
                 description: self.config.stream_description,
-                subjects: self.config.subjects,
                 max_messages_per_subject: 1,
+                subjects: self.config.subjects.clone(),
                 discard: DiscardPolicy::Old,
                 retention: RetentionPolicy::Limits,
                 max_age: Duration::new(max_age, 0),
@@ -63,6 +63,20 @@ impl Builder {
 
             match stream {
                 Ok(_) => {
+                    let mut subjects = stream
+                        .unwrap()
+                        .info()
+                        .await
+                        .unwrap()
+                        .config
+                        .subjects
+                        .clone();
+
+                    subjects.extend(self.config.subjects);
+                    subjects.sort();
+                    subjects.dedup();
+                    stream_config.subjects = subjects;
+
                     context
                         .update_stream(stream_config)
                         .await

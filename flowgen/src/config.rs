@@ -2,7 +2,7 @@ use serde::Deserialize;
 
 #[derive(Deserialize, Clone)]
 pub struct Config {
-    pub flow: Flow,
+    pub flows: Vec<Flow>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -10,6 +10,7 @@ pub struct Flow {
     pub source: Source,
     pub target: Target,
 }
+
 #[derive(Deserialize, Clone)]
 #[allow(non_camel_case_types)]
 pub enum Source {

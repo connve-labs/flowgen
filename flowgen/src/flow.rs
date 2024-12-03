@@ -8,7 +8,7 @@ pub enum Error {
     #[error("Cannot open/read the credentials file at path {1}")]
     OpenFile(#[source] std::io::Error, PathBuf),
     #[error("Cannot parse config file")]
-    ParseConfig(#[source] toml::de::Error),
+    ParseConfig(#[source] serde_json::Error),
     #[error("Cannot setup Flowgen Client")]
     FlowgenService(#[source] flowgen_core::service::Error),
     #[error("Failed to setup Salesforce PubSub as flow source.")]
@@ -51,33 +51,37 @@ impl Flow {
         // Get cloned version of the config.
         let config = self.config.clone();
 
-        // Setup source subscribers.
-        match config.flow.source {
-            config::Source::salesforce_pubsub(config) => {
-                let subscriber =
-                    flowgen_salesforce::pubsub::subscriber::Builder::new(service.clone(), config)
+        for flow in config.flows {
+            // Setup source subscribers.
+            match flow.source {
+                config::Source::salesforce_pubsub(config) => {
+                    let subscriber = flowgen_salesforce::pubsub::subscriber::Builder::new(
+                        service.clone(),
+                        config,
+                    )
+                    .build()
+                    .await
+                    .map_err(Error::FlowgenSalesforcePubSubSubscriberError)?;
+                    self.source = Some(Source::salesforce_pubsub(subscriber));
+                }
+                config::Source::file(config) => {
+                    let subscriber = flowgen_file::subscriber::Builder::new(config)
                         .build()
                         .await
-                        .map_err(Error::FlowgenSalesforcePubSubSubscriberError)?;
-                self.source = Some(Source::salesforce_pubsub(subscriber));
+                        .unwrap();
+                    self.source = Some(Source::file(subscriber));
+                }
             }
-            config::Source::file(config) => {
-                let subscriber = flowgen_file::subscriber::Builder::new(config)
-                    .build()
-                    .await
-                    .unwrap();
-                self.source = Some(Source::file(subscriber));
-            }
-        }
 
-        // Setup target publishers.
-        match config.flow.target {
-            config::Target::nats_jetstream(config) => {
-                let publisher = flowgen_nats::jetstream::context::Builder::new(config)
-                    .build()
-                    .await
-                    .map_err(Error::FlowgenNatsJetStreamContext)?;
-                self.target = Some(Target::nats_jetstream(publisher));
+            // Setup target publishers.
+            match flow.target {
+                config::Target::nats_jetstream(config) => {
+                    let publisher = flowgen_nats::jetstream::context::Builder::new(config)
+                        .build()
+                        .await
+                        .map_err(Error::FlowgenNatsJetStreamContext)?;
+                    self.target = Some(Target::nats_jetstream(publisher));
+                }
             }
         }
         Ok(self)
@@ -96,7 +100,7 @@ impl Builder {
     pub fn build(&mut self) -> Result<Flow, Error> {
         let c = std::fs::read_to_string(&self.config_path)
             .map_err(|e| Error::OpenFile(e, self.config_path.clone()))?;
-        let config: config::Config = toml::from_str(&c).map_err(Error::ParseConfig)?;
+        let config: config::Config = serde_json::from_str(&c).map_err(Error::ParseConfig)?;
         let f = Flow {
             config,
             source: None,
