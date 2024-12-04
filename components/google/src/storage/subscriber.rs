@@ -10,7 +10,7 @@ use tokio::{
 };
 use tokio_stream::StreamExt;
 
-use super::v2::ReadObjectRequest;
+use super::v2::{GetObjectRequest, ReadObjectRequest};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -43,24 +43,34 @@ impl Subscriber {
             let mut stream = context
                 .lock()
                 .await
-                .read_object(ReadObjectRequest {
-                    object,
-                    bucket,
+                .get_object(GetObjectRequest {
                     ..Default::default()
                 })
                 .await
                 .unwrap()
                 .into_inner();
 
-            while let Some(received) = stream.next().await {
-                match received {
-                    Ok(resp) => {
-                        let m: Vec<u8> = bincode::serialize(&resp).unwrap();
-                        tx.send(m).await.unwrap();
-                    }
-                    Err(e) => {}
-                }
-            }
+            // let mut stream = context
+            //     .lock()
+            //     .await
+            //     .read_object(ReadObjectRequest {
+            //         object,
+            //         bucket,
+            //         ..Default::default()
+            //     })
+            //     .await
+            //     .unwrap()
+            //     .into_inner();
+
+            // while let Some(received) = stream.next().await {
+            //     match received {
+            //         Ok(resp) => {
+            //             let m: Vec<u8> = bincode::serialize(&resp).unwrap();
+            //             tx.send(m).await.unwrap();
+            //         }
+            //         Err(e) => {}
+            //     }
+            // }
             Ok(())
         });
 

@@ -54,6 +54,15 @@ impl Context {
             .await
             .map_err(Error::RPCFailed)
     }
+    pub async fn get_object(
+        &mut self,
+        request: super::super::storage::v2::GetObjectRequest,
+    ) -> Result<tonic::Response<super::super::storage::v2::Object>, Error> {
+        self.client
+            .get_object(tonic::Request::new(request))
+            .await
+            .map_err(Error::RPCFailed)
+    }
 }
 
 /// Used to store configure PubSub Context.
