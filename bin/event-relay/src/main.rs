@@ -166,7 +166,7 @@ async fn run(f: flowgen::flow::Flow) -> Result<(), Error> {
 
                 let receiver_task: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
                     while let Some(m) = rx.recv().await {
-                        // Setup nats subject and payload.
+                        // Setup nats subject.
                         let filename = match path.split("/").last() {
                             Some(filename) => filename,
                             None => break,
@@ -179,7 +179,7 @@ async fn run(f: flowgen::flow::Flow) -> Result<(), Error> {
                             timestamp = timestamp
                         );
 
-                        // Convert messages to bytes.
+                        // Convert message to bytes.
                         let event = m.to_bytes().map_err(Error::FlowgenFileSubscriberError)?;
 
                         // Publish an event.
