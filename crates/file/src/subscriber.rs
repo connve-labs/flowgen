@@ -1,4 +1,5 @@
 use arrow::{
+    array::RecordBatch,
     csv::{reader::Format, ReaderBuilder},
     ipc::writer::StreamWriter,
 };
@@ -18,14 +19,33 @@ pub enum Error {
     #[error("There was an error deserializing data into binary format.")]
     Arrow(#[source] arrow::error::ArrowError),
     #[error("There was an error with sending message over channel.")]
-    TokioSendMessage(#[source] tokio::sync::mpsc::error::SendError<Vec<u8>>),
+    TokioSendMessage(#[source] tokio::sync::mpsc::error::SendError<RecordBatch>),
+}
+
+pub trait Converter {
+    type Error;
+    fn to_bytes(&self) -> Result<Vec<u8>, Self::Error>;
+}
+
+impl Converter for RecordBatch {
+    type Error = Error;
+    fn to_bytes(&self) -> Result<Vec<u8>, Error> {
+        let buffer: Vec<u8> = Vec::new();
+
+        let mut stream_writer =
+            StreamWriter::try_new(buffer, &self.schema()).map_err(Error::Arrow)?;
+        stream_writer.write(self).map_err(Error::Arrow)?;
+        stream_writer.finish().map_err(Error::Arrow)?;
+
+        Ok(stream_writer.get_mut().to_vec())
+    }
 }
 
 pub struct Subscriber {
     pub path: String,
     pub async_task_list: Option<Vec<JoinHandle<Result<(), Error>>>>,
-    pub rx: Receiver<Vec<u8>>,
-    tx: Sender<Vec<u8>>,
+    pub rx: Receiver<RecordBatch>,
+    tx: Sender<RecordBatch>,
 }
 
 impl Subscriber {
@@ -45,16 +65,10 @@ impl Subscriber {
                 .build(file)
                 .map_err(Error::Arrow)?;
 
-            if let Some(batch) = csv.next() {
-                let record_batch = batch.map_err(Error::Arrow)?;
-                let buffer: Vec<u8> = Vec::new();
+            if let Some(value) = csv.next() {
+                let record_batch = value.map_err(Error::Arrow)?;
 
-                let mut stream_writer =
-                    StreamWriter::try_new(buffer, &schema).map_err(Error::Arrow)?;
-                stream_writer.write(&record_batch).map_err(Error::Arrow)?;
-                stream_writer.finish().map_err(Error::Arrow)?;
-
-                tx.send(stream_writer.get_ref().to_vec())
+                tx.send(record_batch)
                     .await
                     .map_err(Error::TokioSendMessage)?;
             }

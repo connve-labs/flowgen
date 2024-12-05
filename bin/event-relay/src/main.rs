@@ -1,6 +1,7 @@
 use async_nats::jetstream::context::Publish;
 use chrono::Utc;
 use flowgen::flow;
+use flowgen_file::subscriber::Converter;
 use flowgen_salesforce::pubsub::eventbus::v1::TopicInfo;
 use futures::future::try_join_all;
 use futures::future::TryJoinAll;
@@ -11,7 +12,6 @@ use tokio::task::JoinHandle;
 use tracing::error;
 use tracing::event;
 use tracing::Level;
-
 pub const DEFAULT_TOPIC_NAME: &str = "/data/ChangeEvents";
 
 #[derive(thiserror::Error, Debug)]
@@ -179,13 +179,19 @@ async fn run(f: flowgen::flow::Flow) -> Result<(), Error> {
                             timestamp = timestamp
                         );
 
+                        // Convert messages to bytes.
+                        let event = m.to_bytes().map_err(Error::FlowgenFileSubscriberError)?;
+
                         // Publish an event.
                         if let Some(target) = f.target.as_ref() {
                             match target {
                                 flow::Target::nats_jetstream(context) => {
                                     context
                                         .jetstream
-                                        .send_publish(subject, Publish::build().payload(m.into()))
+                                        .send_publish(
+                                            subject,
+                                            Publish::build().payload(event.into()),
+                                        )
                                         .await
                                         .map_err(Error::NatsPublish)?
                                         .await
@@ -204,24 +210,7 @@ async fn run(f: flowgen::flow::Flow) -> Result<(), Error> {
                     .await
                     .map_err(Error::TokioJoin)?;
             }
-            flow::Source::gcp_storage(source) => {
-                let mut subscriber = source.init().unwrap();
-                subscriber.subscribe().await.unwrap();
-
-                let mut rx = subscriber.rx;
-
-                let receiver_task: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
-                    while let Some(m) = rx.recv().await {
-                        println!("{:?}", m)
-                    }
-                    Ok(())
-                });
-
-                //Run all receiver tasks.
-                try_join_all(vec![receiver_task])
-                    .await
-                    .map_err(Error::TokioJoin)?;
-            }
+            _ => {}
         }
     }
 
