@@ -14,7 +14,7 @@ pub enum Error {
     #[error("Failed to setup Salesforce PubSub as flow source.")]
     FlowgenSalesforcePubSubSubscriberError(#[source] flowgen_salesforce::pubsub::subscriber::Error),
     #[error("Failed to setup Nats JetStream as flow target.")]
-    FlowgenNatsJetStreamContext(#[source] flowgen_nats::jetstream::context::Error),
+    FlowgenNatsJetStreamPublisher(#[source] flowgen_nats::jetstream::publisher::Error),
     #[error("There was an error with Flowgen File Subscriber.")]
     FlowgenFileSubscriberError(#[source] flowgen_file::subscriber::Error),
 }
@@ -24,12 +24,12 @@ pub enum Source {
     file(flowgen_file::subscriber::Subscriber),
     salesforce_pubsub(flowgen_salesforce::pubsub::subscriber::Subscriber),
     gcp_storage(flowgen_google::storage::subscriber::Subscriber),
-    nats_jetstream(flowgen_nats::jetstream::context::Context),
+    nats_jetstream(flowgen_nats::jetstream::subscriber::Subscriber),
 }
 
 #[allow(non_camel_case_types)]
 pub enum Target {
-    nats_jetstream(flowgen_nats::jetstream::context::Context),
+    nats_jetstream(flowgen_nats::jetstream::publisher::Publisher),
 }
 
 pub struct Flow {
@@ -85,10 +85,10 @@ impl Flow {
         // Setup target publishers.
         match config.flow.target {
             config::Target::nats_jetstream(config) => {
-                let publisher = flowgen_nats::jetstream::context::Builder::new(config)
+                let publisher = flowgen_nats::jetstream::publisher::Builder::new(config)
                     .build()
                     .await
-                    .map_err(Error::FlowgenNatsJetStreamContext)?;
+                    .map_err(Error::FlowgenNatsJetStreamPublisher)?;
                 self.target = Some(Target::nats_jetstream(publisher));
             }
         }
