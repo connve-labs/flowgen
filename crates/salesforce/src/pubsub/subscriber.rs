@@ -18,19 +18,21 @@ pub enum Error {
     FlowgenSalesforceAuth(#[source] crate::client::Error),
     #[error("There was an error executing async task.")]
     TokioJoin(#[source] tokio::task::JoinError),
-    #[error("There was an error with sending ChannelMessage")]
-    TokioSendChannelMessage(#[source] tokio::sync::mpsc::error::SendError<ChannelMessage>),
-}
-pub enum ChannelMessage {
-    FetchResponse(FetchResponse),
-    TopicInfo(TopicInfo),
+    #[error("There was an error with sending message over channel.")]
+    TokioSendMessage(#[source] tokio::sync::mpsc::error::SendError<Message>),
 }
 
 pub struct Subscriber {
     pub async_task_list: Vec<JoinHandle<Result<(), Error>>>,
     pub pubsub: Arc<Mutex<super::context::Context>>,
-    pub rx: Receiver<ChannelMessage>,
-    pub tx: Sender<ChannelMessage>,
+    pub rx: Receiver<Message>,
+    pub tx: Sender<Message>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Message {
+    pub fetch_response: FetchResponse,
+    pub topic_info: TopicInfo,
 }
 
 pub struct Builder {
@@ -81,10 +83,6 @@ impl Builder {
                     .map_err(Error::FlowgenSalesforcePubSub)?
                     .into_inner();
 
-                tx.send(ChannelMessage::TopicInfo(topic_info))
-                    .await
-                    .map_err(Error::TokioSendChannelMessage)?;
-
                 let mut stream = pubsub
                     .lock()
                     .await
@@ -100,9 +98,11 @@ impl Builder {
                 while let Some(received) = stream.next().await {
                     match received {
                         Ok(fr) => {
-                            tx.send(ChannelMessage::FetchResponse(fr))
-                                .await
-                                .map_err(Error::TokioSendChannelMessage)?;
+                            let m = Message {
+                                fetch_response: fr,
+                                topic_info: topic_info.clone(),
+                            };
+                            tx.send(m).await.map_err(Error::TokioSendMessage)?;
                         }
                         Err(e) => {
                             return Err(Error::FlowgenSalesforcePubSub(

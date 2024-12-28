@@ -8,6 +8,7 @@ pub struct Config {
 #[derive(Deserialize, Clone)]
 pub struct Flow {
     pub source: Source,
+    pub processor: Option<Processor>,
     pub target: Target,
 }
 
@@ -19,6 +20,10 @@ pub enum Source {
     gcp_storage(flowgen_google::storage::config::Source),
     nats_jetstream(flowgen_nats::jetstream::config::Source),
 }
+
+#[derive(Deserialize, Clone)]
+#[allow(non_camel_case_types)]
+pub enum Processor {}
 
 #[derive(Deserialize, Clone)]
 #[allow(non_camel_case_types)]

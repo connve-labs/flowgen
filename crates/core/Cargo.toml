@@ -12,5 +12,6 @@ path = "src/lib.rs"
 
 [dependencies]
 tonic = { version = "0.10.2", features = ["tls-roots"] }
+arrow = "53.3.0"
 thiserror = "1.0.63"
 url = "2.5.2"

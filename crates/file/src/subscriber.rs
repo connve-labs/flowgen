@@ -4,11 +4,10 @@ use arrow::{
     ipc::writer::StreamWriter,
 };
 use chrono::Utc;
+use flowgen_core::messages::ChannelMessage;
+use serde::{Deserialize, Serialize};
 use std::{fs::File, io::Seek, sync::Arc};
-use tokio::{
-    sync::mpsc::{Receiver, Sender},
-    task::JoinHandle,
-};
+use tokio::{sync::broadcast::Sender, sync::mpsc::Receiver, task::JoinHandle};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -19,7 +18,7 @@ pub enum Error {
     #[error("There was an error deserializing data into binary format.")]
     Arrow(#[source] arrow::error::ArrowError),
     #[error("There was an error with sending message over channel.")]
-    TokioSendMessage(#[source] tokio::sync::mpsc::error::SendError<Message>),
+    TokioSendMessage(#[source] tokio::sync::mpsc::error::SendError<ChannelMessage>),
 }
 
 pub trait Converter {
@@ -44,34 +43,32 @@ impl Converter for RecordBatch {
 pub struct Subscriber {
     pub async_task_list: Vec<JoinHandle<Result<(), Error>>>,
     pub path: String,
-    pub rx: Receiver<Message>,
-    pub tx: Sender<Message>,
-}
-
-#[derive(Debug)]
-pub struct Message {
-    pub record_batch: RecordBatch,
-    pub file_chunk: String,
+    // pub rx: Receiver<Message>,
+    // pub tx: Sender<Message>,
 }
 
 /// A builder of the file reader.
 pub struct Builder {
     config: super::config::Source,
+    tx: Sender<ChannelMessage>,
 }
 
 impl Builder {
     /// Creates a new instance of a Builder.
-    pub fn new(config: super::config::Source) -> Builder {
-        Builder { config }
+    pub fn new(config: super::config::Source, tx: &Sender<ChannelMessage>) -> Builder {
+        Builder {
+            config,
+            tx: tx.clone(),
+        }
     }
 
     pub async fn build(self) -> Result<Subscriber, Error> {
-        let (tx, rx) = tokio::sync::mpsc::channel(200);
+        // let (tx, rx) = tokio::sync::broadcast::channel(200);
         let mut async_task_list: Vec<JoinHandle<Result<(), Error>>> = Vec::new();
         let path = self.config.path.clone();
 
         {
-            let tx = tx.clone();
+            // let tx = self.tx.clone();
             let subscribe_task: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
                 let mut file = File::open(path.clone()).map_err(Error::InputOutput)?;
                 let (schema, _) = Format::default()
@@ -94,11 +91,11 @@ impl Builder {
                         None => break,
                     };
                     let file_chunk = format!("{}.{}", filename, timestamp);
-                    let m = Message {
+                    let m = flowgen_core::messages::FileMessage {
                         record_batch,
                         file_chunk,
                     };
-                    tx.send(m).await.map_err(Error::TokioSendMessage)?;
+                    self.tx.send(ChannelMessage::FileMessage(m)).unwrap();
                 }
                 Ok(())
             });
@@ -108,8 +105,8 @@ impl Builder {
         Ok(Subscriber {
             path: self.config.path,
             async_task_list,
-            tx,
-            rx,
+            // tx,
+            // rx,
         })
     }
 }

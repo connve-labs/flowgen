@@ -1797,6 +1797,7 @@ dependencies = [
 name = "flowgen_core"
 version = "0.0.1"
 dependencies = [
+ "arrow",
  "thiserror 1.0.69",
  "tonic",
  "url",
