@@ -42,22 +42,7 @@ pub enum Error {
 }
 
 #[allow(non_camel_case_types)]
-pub enum Source {
-    file(flowgen_file::subscriber::Subscriber),
-    salesforce_pubsub(flowgen_salesforce::pubsub::subscriber::Subscriber),
-    gcp_storage(flowgen_google::storage::subscriber::Subscriber),
-    nats_jetstream(flowgen_nats::jetstream::subscriber::Subscriber),
-}
-
-#[allow(non_camel_case_types)]
 pub enum Processor {}
-
-#[allow(non_camel_case_types)]
-pub enum Target {
-    nats_jetstream(flowgen_nats::jetstream::publisher::Publisher),
-    deltalake(flowgen_deltalake::publisher::Publisher),
-    salesforce_pubsub(flowgen_salesforce::pubsub::publisher::Publisher),
-}
 
 pub struct Flow {
     config: config::Config,
@@ -112,6 +97,14 @@ impl Flow {
             }
             _ => {
                 info!("unimplemented");
+            }
+        }
+
+        for processor in config.flow.processor.iter() {
+            match processor {
+                _ => {
+                    println!("here")
+                }
             }
         }
 

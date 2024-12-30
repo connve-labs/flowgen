@@ -8,7 +8,7 @@ pub struct Config {
 #[derive(Deserialize, Clone)]
 pub struct Flow {
     pub source: Source,
-    pub processor: Option<Processor>,
+    pub processor: Vec<Processor>,
     pub target: Target,
 }
 
