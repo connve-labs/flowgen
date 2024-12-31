@@ -162,26 +162,23 @@ impl Flow {
                     let mut rx = tx.subscribe();
                     let handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
                         while let Ok(message) = rx.recv().await {
-                            if let ChannelMessage::salesforce_pubsub(m) = message {
-                                let event = Bytes::from(m.clone());
-                                let s = m.topic_info.topic_name.replace('/', ".").to_lowercase();
-                                let event_name = &s[1..];
-                                let subject = format!(
-                                    "salesforce.pubsub.in.{}.{}",
-                                    event_name, m.fetch_response.rpc_id
-                                );
+                            if let ChannelMessage::salesforce_pubsub(ref m) = message {
+                                if let Some(pe) = &m.consumer_event.event {
+                                    let event = Bytes::from(m.clone());
+                                    let s =
+                                        m.topic_info.topic_name.replace('/', ".").to_lowercase();
+                                    let event_name = &s[1..];
+                                    let subject =
+                                        format!("salesforce.pubsub.in.{}.{}", event_name, pe.id);
 
-                                publisher
-                                    .jetstream
-                                    .send_publish(subject, Publish::build().payload(event))
-                                    .await
-                                    .map_err(Error::NatsPublish)?;
+                                    publisher
+                                        .jetstream
+                                        .send_publish(subject, Publish::build().payload(event))
+                                        .await
+                                        .map_err(Error::NatsPublish)?;
 
-                                event!(
-                                    Level::INFO,
-                                    "salesforce_pubsub: {}",
-                                    m.fetch_response.rpc_id
-                                );
+                                    event!(Level::INFO, "salesforce_pubsub: {}", pe.id);
+                                }
                             }
                         }
                         Ok(())

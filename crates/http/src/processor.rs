@@ -71,8 +71,9 @@ impl Builder {
 
                         let m = HttpMessage {
                             response,
-                            kvs: None,
+                            metadata: None,
                         };
+
                         self.tx
                             .send(ChannelMessage::http(m))
                             .map_err(Error::TokioSendMessage)?;

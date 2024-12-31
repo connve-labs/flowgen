@@ -115,12 +115,14 @@ impl Builder {
                 while let Some(received) = stream.next().await {
                     match received {
                         Ok(fr) => {
-                            let m = SalesforcePubSubMessage {
-                                fetch_response: fr,
-                                topic_info: topic_info.clone(),
-                            };
-                            tx.send(ChannelMessage::salesforce_pubsub(m))
-                                .map_err(Error::TokioSendMessage)?;
+                            for ce in fr.events {
+                                let m = SalesforcePubSubMessage {
+                                    consumer_event: ce,
+                                    topic_info: topic_info.clone(),
+                                };
+                                tx.send(ChannelMessage::salesforce_pubsub(m))
+                                    .map_err(Error::TokioSendMessage)?;
+                            }
                         }
                         Err(e) => {
                             return Err(Error::FlowgenSalesforcePubSub(

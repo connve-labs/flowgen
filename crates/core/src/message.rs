@@ -8,7 +8,7 @@ pub struct FileMessage {
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct SalesforcePubSubMessage {
-    pub fetch_response: salesforce_pubsub::eventbus::v1::FetchResponse,
+    pub consumer_event: salesforce_pubsub::eventbus::v1::ConsumerEvent,
     pub topic_info: salesforce_pubsub::eventbus::v1::TopicInfo,
 }
 
@@ -23,7 +23,7 @@ impl From<SalesforcePubSubMessage> for bytes::Bytes {
 #[derive(Debug, Clone)]
 pub struct HttpMessage {
     pub response: HashMap<String, String>,
-    pub kvs: Option<HashMap<String, String>>,
+    pub metadata: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Clone)]
