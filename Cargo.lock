@@ -479,7 +479,7 @@ dependencies = [
  "rustversion",
  "serde",
  "sync_wrapper 0.1.2",
- "tower",
+ "tower 0.4.13",
  "tower-layer",
  "tower-service",
 ]
@@ -1476,7 +1476,7 @@ dependencies = [
  "itertools 0.13.0",
  "object_store",
  "parquet",
- "reqwest 0.12.9",
+ "reqwest 0.12.11",
  "roaring",
  "rustc_version",
  "serde",
@@ -1769,6 +1769,7 @@ dependencies = [
  "flowgen_deltalake",
  "flowgen_file",
  "flowgen_google",
+ "flowgen_http",
  "flowgen_nats",
  "flowgen_salesforce",
  "futures",
@@ -1881,6 +1882,27 @@ dependencies = [
  "tokio-util",
  "tonic",
  "tonic-build",
+ "url",
+]
+
+[[package]]
+name = "flowgen_http"
+version = "0.0.1"
+dependencies = [
+ "bytes",
+ "flowgen_core",
+ "futures-util",
+ "oauth2",
+ "prost 0.12.6",
+ "prost-types",
+ "reqwest 0.12.11",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tonic",
  "url",
 ]
 
@@ -2111,7 +2133,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "http 1.2.0",
- "reqwest 0.12.9",
+ "reqwest 0.12.11",
  "rustls 0.23.20",
  "rustls-pemfile 2.2.0",
  "serde",
@@ -3101,7 +3123,7 @@ dependencies = [
  "percent-encoding",
  "quick-xml",
  "rand",
- "reqwest 0.12.9",
+ "reqwest 0.12.11",
  "ring",
  "rustls-pemfile 2.2.0",
  "serde",
@@ -3473,7 +3495,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "157c5a9d7ea5c2ed2d9fb8f495b64759f7816c7eaea54ba3978f0d63000162e3"
 dependencies = [
  "anyhow",
- "itertools 0.12.1",
+ "itertools 0.13.0",
  "proc-macro2",
  "quote",
  "syn 2.0.91",
@@ -3710,9 +3732,9 @@ dependencies = [
 
 [[package]]
 name = "reqwest"
-version = "0.12.9"
+version = "0.12.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a77c62af46e79de0a562e1a9849205ffcb7fc1238876e9bd743357570e04046f"
+checksum = "7fe060fe50f524be480214aba758c71f99f90ee8c83c5a36b5e9e1d568eb4eb3"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -3749,6 +3771,7 @@ dependencies = [
  "tokio-native-tls",
  "tokio-rustls 0.26.1",
  "tokio-util",
+ "tower 0.5.2",
  "tower-service",
  "url",
  "wasm-bindgen",
@@ -4804,7 +4827,7 @@ dependencies = [
  "tokio",
  "tokio-rustls 0.24.1",
  "tokio-stream",
- "tower",
+ "tower 0.4.13",
  "tower-layer",
  "tower-service",
  "tracing",
@@ -4841,6 +4864,21 @@ dependencies = [
  "tower-layer",
  "tower-service",
  "tracing",
+]
+
+[[package]]
+name = "tower"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d039ad9159c98b70ecfd540b2573b97f7f52c3e8d9f8ad57a24b916a536975f9"
+dependencies = [
+ "futures-core",
+ "futures-util",
+ "pin-project-lite",
+ "sync_wrapper 1.0.2",
+ "tokio",
+ "tower-layer",
+ "tower-service",
 ]
 
 [[package]]

@@ -8,7 +8,7 @@ pub struct Config {
 #[derive(Deserialize, Clone)]
 pub struct Flow {
     pub source: Source,
-    pub processor: Vec<Processor>,
+    pub processor: Option<Vec<Processor>>,
     pub target: Target,
 }
 
@@ -23,7 +23,9 @@ pub enum Source {
 
 #[derive(Deserialize, Clone)]
 #[allow(non_camel_case_types)]
-pub enum Processor {}
+pub enum Processor {
+    http(flowgen_http::config::Processor),
+}
 
 #[derive(Deserialize, Clone)]
 #[allow(non_camel_case_types)]

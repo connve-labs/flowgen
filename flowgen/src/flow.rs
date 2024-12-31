@@ -63,7 +63,7 @@ impl Flow {
         let config = self.config.clone();
 
         let mut handle_list: Vec<JoinHandle<Result<(), Error>>> = Vec::new();
-        let (tx, mut rx): (Sender<ChannelMessage>, Receiver<ChannelMessage>) =
+        let (tx, _): (Sender<ChannelMessage>, Receiver<ChannelMessage>) =
             tokio::sync::broadcast::channel(1000);
 
         // Setup source subscribers.
@@ -100,10 +100,27 @@ impl Flow {
             }
         }
 
-        for processor in config.flow.processor.iter() {
-            match processor {
-                _ => {
-                    println!("here")
+        // Setup processors.
+        if let Some(procesor_list) = config.flow.processor {
+            for processor in procesor_list {
+                match processor {
+                    config::Processor::http(config) => {
+                        let processor = flowgen_http::processor::Builder::new(config, &tx)
+                            .build()
+                            .await
+                            .unwrap()
+                            .process()
+                            .await;
+
+                        // let mut rx = tx.subscribe();
+                        // let handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
+                        //     while let Ok(message) = rx.recv().await {
+                        //         println!("{:?}", message);
+                        //     }
+                        //     Ok(())
+                        // });
+                        // handle_list.push(handle);
+                    }
                 }
             }
         }
@@ -119,6 +136,7 @@ impl Flow {
 
                 {
                     let publisher = publisher.clone();
+                    let mut rx = tx.subscribe();
                     let handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
                         while let Ok(message) = rx.recv().await {
                             if let ChannelMessage::file(m) = message {
@@ -210,7 +228,7 @@ impl Flow {
                 let mut rx = tx.subscribe();
                 let handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
                     while let Ok(message) = rx.recv().await {
-                        if let ChannelMessage::nats_jetstream(m) = message {
+                        if let ChannelMessage::http(m) = message {
                             println!("{:?}", m);
                             // m.into()
                         }

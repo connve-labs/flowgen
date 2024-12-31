@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 #[derive(Debug, Clone)]
 pub struct FileMessage {
     pub record_batch: arrow::array::RecordBatch,
@@ -19,9 +21,16 @@ impl From<SalesforcePubSubMessage> for bytes::Bytes {
 }
 
 #[derive(Debug, Clone)]
+pub struct HttpMessage {
+    pub response: HashMap<String, String>,
+    pub kvs: Option<HashMap<String, String>>,
+}
+
+#[derive(Debug, Clone)]
 #[allow(non_camel_case_types)]
 pub enum ChannelMessage {
     nats_jetstream(async_nats::message::Message),
     file(FileMessage),
     salesforce_pubsub(SalesforcePubSubMessage),
+    http(HttpMessage),
 }
