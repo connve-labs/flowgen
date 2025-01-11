@@ -144,7 +144,7 @@ impl Flow {
                         let handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
                             while let Ok(m) = rx.recv().await {
                                 if m.current_task_index == Some(i - 1) {
-                                    // println!("{:?}", m.subject);
+                                    println!("{:?}", m);
                                 }
                             }
                             Ok(())

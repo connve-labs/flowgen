@@ -68,27 +68,27 @@ impl Builder {
 
         let handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
             while let Ok(m) = self.rx.recv().await {
-                let response = client
-                    .get(self.config.endpoint.as_str())
-                    .send()
-                    .await
-                    .unwrap()
-                    .json::<Value>()
-                    .await
-                    .unwrap();
+                if m.current_task_index == Some(self.current_task_index - 1) {
+                    let response = client
+                        .get(self.config.endpoint.as_str())
+                        .send()
+                        .await
+                        .unwrap()
+                        .json::<Value>()
+                        .await
+                        .unwrap();
 
-                let data = response.to_recordbatch().unwrap();
-                let subject = "http.respone.out".to_string();
+                    let data = response.to_recordbatch().unwrap();
+                    let subject = "http.respone.out".to_string();
 
-                let m = Message {
-                    data,
-                    subject,
-                    current_task_index: Some(self.current_task_index),
-                };
-                println!("{:?}", m.subject);
-                self.tx.send(m).map_err(Error::TokioSendMessage)?;
+                    let m = Message {
+                        data,
+                        subject,
+                        current_task_index: Some(self.current_task_index),
+                    };
+                    self.tx.send(m).map_err(Error::TokioSendMessage)?;
+                }
             }
-
             Ok(())
         });
 
