@@ -21,11 +21,17 @@ pub enum Error {
     FlowgenSalesforceAuth(#[source] crate::client::Error),
     #[error("There was an error executing async task.")]
     TokioJoin(#[source] tokio::task::JoinError),
+    #[error("There was an error parsing value to avro schema.")]
+    SerdeAvroSchema(#[source] serde_avro_fast::schema::SchemaError),
+    #[error("There was an error parsing value to an data entity.")]
+    SerdeAvroValue(#[source] serde_avro_fast::de::DeError),
     #[error("There was an error with sending message over channel.")]
     TokioSendMessage(#[source] tokio::sync::broadcast::error::SendError<Message>),
     #[error("There was an error deserializing data into binary format.")]
     Bincode(#[source] bincode::Error),
 }
+
+const DEFAULT_MESSAGE_SUBJECT: &str = "salesforce.pubsub.in";
 
 pub struct Subscriber {
     handle_list: Vec<JoinHandle<Result<(), Error>>>,
@@ -50,6 +56,7 @@ pub struct Builder {
     service: flowgen_core::service::Service,
     config: super::config::Source,
     tx: Sender<Message>,
+    current_task_index: usize,
 }
 
 impl Builder {
@@ -58,11 +65,13 @@ impl Builder {
         service: flowgen_core::service::Service,
         config: super::config::Source,
         tx: &Sender<Message>,
+        current_task_index: usize,
     ) -> Builder {
         Builder {
             service,
             config,
             tx: tx.clone(),
+            current_task_index,
         }
     }
 
@@ -86,11 +95,11 @@ impl Builder {
         let mut handle_list: Vec<JoinHandle<Result<(), Error>>> = Vec::new();
         let pubsub = Arc::new(Mutex::new(pubsub));
 
-        for topic in self.config.topic_list.iter() {
+        for topic in self.config.topic_list.clone().iter() {
             let pubsub: Arc<Mutex<super::context::Context>> = Arc::clone(&pubsub);
             let topic = topic.clone();
-
             let tx = self.tx.clone();
+
             let handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
                 let topic_info = pubsub
                     .lock()
@@ -128,23 +137,37 @@ impl Builder {
                     match received {
                         Ok(fr) => {
                             for ce in fr.events {
-                                let event = ce.clone().event.unwrap();
-                                let schema: serde_avro_fast::Schema =
-                                    schema_info.schema_json.parse().unwrap();
-                                let value = serde_avro_fast::from_datum_slice::<Value>(
-                                    &event.payload[..],
-                                    &schema,
-                                )
-                                .unwrap();
+                                if let Some(event) = ce.event {
+                                    let schema: serde_avro_fast::Schema = schema_info
+                                        .schema_json
+                                        .parse()
+                                        .map_err(Error::SerdeAvroSchema)?;
 
-                                let data = value.to_recordbatch().unwrap();
+                                    let value = serde_avro_fast::from_datum_slice::<Value>(
+                                        &event.payload[..],
+                                        &schema,
+                                    )
+                                    .map_err(Error::SerdeAvroValue)?;
 
-                                let topic = topic_info.topic_name.replace('/', ".").to_lowercase();
-                                let subject =
-                                    format!("salesforce.pubsub.in.{}.{}", &topic[1..], event.id);
+                                    let data = value.to_recordbatch().unwrap();
 
-                                let m = Message { data, subject };
-                                tx.send(m).map_err(Error::TokioSendMessage)?;
+                                    let topic =
+                                        topic_info.topic_name.replace('/', ".").to_lowercase();
+
+                                    let subject = format!(
+                                        "{}.{}.{}",
+                                        DEFAULT_MESSAGE_SUBJECT,
+                                        &topic[1..],
+                                        event.id
+                                    );
+
+                                    let m = Message {
+                                        data,
+                                        subject,
+                                        current_task_index: Some(self.current_task_index),
+                                    };
+                                    tx.send(m).map_err(Error::TokioSendMessage)?;
+                                }
                             }
                         }
                         Err(e) => {

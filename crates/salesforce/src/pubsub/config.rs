@@ -4,6 +4,7 @@ use serde::Deserialize;
 pub struct Source {
     pub credentials: String,
     pub topic_list: Vec<String>,
+    pub next_node: Option<String>,
 }
 
 #[derive(Deserialize, Clone, Debug)]

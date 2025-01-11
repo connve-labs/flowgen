@@ -1,3 +1,4 @@
+use super::message::NatsMessageExt;
 use flowgen_core::{client::Client, message::Message};
 use futures_util::future::TryJoinAll;
 use tokio::{sync::broadcast::Sender, task::JoinHandle};
@@ -7,6 +8,8 @@ use tokio_stream::StreamExt;
 pub enum Error {
     #[error("There was an error authorizating to Nats client.")]
     NatsClientAuth(#[source] crate::client::Error),
+    #[error("There was an error with Nats JetStream Message.")]
+    NatsJetStreamMessage(#[source] crate::jetstream::message::Error),
     #[error("There was an error subscriging to Nats subject.")]
     NatsSubscribe(#[source] async_nats::SubscribeError),
     #[error("There was an error executing async task.")]
@@ -37,14 +40,20 @@ impl Subscriber {
 pub struct Builder {
     config: super::config::Source,
     tx: Sender<Message>,
+    current_task_index: usize,
 }
 
 impl Builder {
     /// Creates a new instance of a Builder.
-    pub fn new(config: super::config::Source, tx: &Sender<Message>) -> Builder {
+    pub fn new(
+        config: super::config::Source,
+        tx: &Sender<Message>,
+        current_task_index: usize,
+    ) -> Builder {
         Builder {
             config,
             tx: tx.clone(),
+            current_task_index,
         }
     }
 
@@ -65,8 +74,10 @@ impl Builder {
                     .subscribe(self.config.subject)
                     .await
                     .map_err(Error::NatsSubscribe)?;
-                while let Some(m) = subscriber.next().await {
-                    // self.tx.send(m).map_err(Error::TokioSendMessage)?;
+                while let Some(event) = subscriber.next().await {
+                    let mut m = event.to_message().map_err(Error::NatsJetStreamMessage)?;
+                    m.current_task_index = Some(self.current_task_index);
+                    self.tx.send(m).map_err(Error::TokioSendMessage)?;
                 }
                 Ok(())
             });

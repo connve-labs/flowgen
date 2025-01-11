@@ -9,9 +9,17 @@ pub struct Config {
 
 #[derive(Deserialize, Clone, Debug)]
 pub struct Flow {
-    pub source: Source,
-    pub processor: Option<Vec<Processor>>,
-    pub target: Target,
+    pub tasks: Vec<Task>, // pub source: Source,
+                          // pub processor: Option<Vec<Processor>>,
+                          // pub target: Target,
+}
+
+#[derive(Deserialize, Clone, Debug)]
+#[allow(non_camel_case_types)]
+pub enum Task {
+    source(Source),
+    processor(Processor),
+    target(Target),
 }
 
 #[derive(Deserialize, Clone, Debug)]

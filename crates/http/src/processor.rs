@@ -2,7 +2,7 @@ use arrow::{
     array::{RecordBatch, StringArray},
     datatypes::{DataType, Field, Schema},
 };
-use flowgen_core::message::Message;
+use flowgen_core::message::{Message, RecordBatchExt};
 use futures_util::future::TryJoinAll;
 use serde_json::Value;
 use std::sync::Arc;
@@ -44,15 +44,21 @@ pub struct Builder {
     config: super::config::Processor,
     tx: Sender<Message>,
     rx: Receiver<Message>,
+    current_task_index: usize,
 }
 
 impl Builder {
     /// Creates a new instance of a Builder.
-    pub fn new(config: super::config::Processor, tx: &Sender<Message>) -> Builder {
+    pub fn new(
+        config: super::config::Processor,
+        tx: &Sender<Message>,
+        current_task_index: usize,
+    ) -> Builder {
         Builder {
             config,
             tx: tx.clone(),
             rx: tx.subscribe(),
+            current_task_index,
         }
     }
 
@@ -62,7 +68,6 @@ impl Builder {
 
         let handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
             while let Ok(m) = self.rx.recv().await {
-                println!("{:?}", m);
                 let response = client
                     .get(self.config.endpoint.as_str())
                     .send()
@@ -72,20 +77,15 @@ impl Builder {
                     .await
                     .unwrap();
 
-                let mut fields = Vec::new();
-                let mut values = Vec::new();
+                let data = response.to_recordbatch().unwrap();
+                let subject = "http.respone.out".to_string();
 
-                for (key, value) in response.as_object().unwrap() {
-                    fields.push(Field::new(key, DataType::Utf8, false));
-                    values.push(value.to_string());
-                }
-
-                let schema = Schema::new(fields);
-                let arrays = StringArray::from(values);
-                let data = RecordBatch::try_new(Arc::new(schema), vec![Arc::new(arrays)]).unwrap();
-                let subject = "test".to_string();
-
-                let m = Message { data, subject };
+                let m = Message {
+                    data,
+                    subject,
+                    current_task_index: Some(self.current_task_index),
+                };
+                println!("{:?}", m.subject);
                 self.tx.send(m).map_err(Error::TokioSendMessage)?;
             }
 

@@ -2118,6 +2118,7 @@ dependencies = [
 name = "flowgen_nats"
 version = "0.0.1"
 dependencies = [
+ "arrow 54.0.0",
  "async-nats",
  "bytes",
  "flowgen_core",
