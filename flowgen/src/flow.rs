@@ -1,14 +1,14 @@
 use crate::config::Task;
 
 use super::config;
-use flowgen_core::{client::Client, message::Message};
+use flowgen_core::{client::Client, event::Event};
 use flowgen_nats::jetstream::message::FlowgenMessageExt;
 use std::{path::PathBuf, sync::Arc};
 use tokio::{
     sync::broadcast::{Receiver, Sender},
     task::JoinHandle,
 };
-use tracing::{error, event, info, Level};
+use tracing::{error, event, Level};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -57,7 +57,7 @@ impl Flow {
         let config = self.config.clone();
 
         let mut handle_list: Vec<JoinHandle<Result<(), Error>>> = Vec::new();
-        let (tx, _): (Sender<Message>, Receiver<Message>) = tokio::sync::broadcast::channel(1000);
+        let (tx, _): (Sender<Event>, Receiver<Event>) = tokio::sync::broadcast::channel(1000);
 
         for (i, task) in config.flow.tasks.iter().enumerate() {
             match task {
@@ -89,13 +89,13 @@ impl Flow {
                 },
                 Task::processor(processor) => match processor {
                     config::Processor::http(config) => {
-                        let processor =
-                            flowgen_http::processor::Builder::new(config.clone(), &tx, i)
-                                .build()
-                                .await
-                                .unwrap()
-                                .process()
-                                .await;
+                        flowgen_http::processor::Builder::new(config.clone(), &tx, i)
+                            .build()
+                            .await
+                            .unwrap()
+                            .process()
+                            .await
+                            .unwrap()
                     }
                 },
                 Task::target(target) => match target {
@@ -111,19 +111,19 @@ impl Flow {
                             let publisher = publisher.clone();
                             let mut rx = tx.subscribe();
                             let handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
-                                while let Ok(m) = rx.recv().await {
-                                    if m.current_task_index == Some(i - 1) {
-                                        let event = m
+                                while let Ok(e) = rx.recv().await {
+                                    if e.current_task_id == Some(i - 1) {
+                                        let event = e
                                             .to_publish()
                                             .map_err(Error::FlowgenNatsJetStreamEventError)?;
 
                                         publisher
                                             .jetstream
-                                            .send_publish(m.subject.clone(), event)
+                                            .send_publish(e.subject.clone(), event)
                                             .await
                                             .map_err(Error::NatsPublish)?;
 
-                                        event!(Level::INFO, "event processed: {}", m.subject);
+                                        event!(Level::INFO, "event processed: {}", e.subject);
                                     }
                                 }
                                 Ok(())
@@ -142,9 +142,9 @@ impl Flow {
 
                         let mut rx = tx.subscribe();
                         let handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
-                            while let Ok(m) = rx.recv().await {
-                                if m.current_task_index == Some(i - 1) {
-                                    println!("{:?}", m);
+                            while let Ok(e) = rx.recv().await {
+                                if e.current_task_id == Some(i - 1) {
+                                    println!("{:?}", e);
                                 }
                             }
                             Ok(())

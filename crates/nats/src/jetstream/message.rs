@@ -1,11 +1,13 @@
 use arrow::ipc::{reader::StreamDecoder, writer::StreamWriter};
 use async_nats::jetstream::context::Publish;
-use flowgen_core::message::Message;
+use flowgen_core::event::EventBuilder;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("There was an error with an Apache Arrow data.")]
     Arrow(#[source] arrow::error::ArrowError),
+    #[error("There was an error constructing Flowgen Event.")]
+    FlowgenEvent(#[source] flowgen_core::event::Error),
     #[error("There was an error getting RecordBatch.")]
     NoRecordBatch(),
 }
@@ -17,10 +19,10 @@ pub trait FlowgenMessageExt {
 
 pub trait NatsMessageExt {
     type Error;
-    fn to_message(&self) -> Result<Message, Self::Error>;
+    fn to_event(&self) -> Result<flowgen_core::event::Event, Self::Error>;
 }
 
-impl FlowgenMessageExt for Message {
+impl FlowgenMessageExt for flowgen_core::event::Event {
     type Error = Error;
     fn to_publish(&self) -> Result<Publish, Self::Error> {
         let buffer: Vec<u8> = Vec::new();
@@ -36,22 +38,22 @@ impl FlowgenMessageExt for Message {
 
 impl NatsMessageExt for async_nats::Message {
     type Error = Error;
-    fn to_message(&self) -> Result<Message, Self::Error> {
+    fn to_event(&self) -> Result<flowgen_core::event::Event, Self::Error> {
         let mut buffer = arrow::buffer::Buffer::from_vec(self.payload.to_vec());
         let mut decoder = StreamDecoder::new();
 
-        let record_batch = decoder
+        let data = decoder
             .decode(&mut buffer)
             .map_err(Error::Arrow)?
             .ok_or_else(Error::NoRecordBatch)?;
 
-        let m = Message {
-            data: record_batch,
-            subject: self.subject.to_string(),
-            current_task_index: None,
-        };
+        let e = EventBuilder::new()
+            .data(data)
+            .subject(self.subject.to_string())
+            .build()
+            .map_err(Error::FlowgenEvent)?;
 
         decoder.finish().map_err(Error::Arrow)?;
-        Ok(m)
+        Ok(e)
     }
 }

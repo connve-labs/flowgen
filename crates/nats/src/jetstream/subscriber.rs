@@ -1,5 +1,5 @@
 use super::message::NatsMessageExt;
-use flowgen_core::{client::Client, message::Message};
+use flowgen_core::{client::Client, event::Event};
 use futures_util::future::TryJoinAll;
 use tokio::{sync::broadcast::Sender, task::JoinHandle};
 use tokio_stream::StreamExt;
@@ -15,7 +15,7 @@ pub enum Error {
     #[error("There was an error executing async task.")]
     TokioJoin(#[source] tokio::task::JoinError),
     #[error("There was an error with sending message over channel.")]
-    TokioSendMessage(#[source] tokio::sync::broadcast::error::SendError<Message>),
+    TokioSendMessage(#[source] tokio::sync::broadcast::error::SendError<Event>),
 }
 
 pub struct Subscriber {
@@ -39,21 +39,21 @@ impl Subscriber {
 /// A builder of the file reader.
 pub struct Builder {
     config: super::config::Source,
-    tx: Sender<Message>,
-    current_task_index: usize,
+    tx: Sender<Event>,
+    current_task_id: usize,
 }
 
 impl Builder {
     /// Creates a new instance of a Builder.
     pub fn new(
         config: super::config::Source,
-        tx: &Sender<Message>,
-        current_task_index: usize,
+        tx: &Sender<Event>,
+        current_task_id: usize,
     ) -> Builder {
         Builder {
             config,
             tx: tx.clone(),
-            current_task_index,
+            current_task_id,
         }
     }
 
@@ -74,10 +74,10 @@ impl Builder {
                     .subscribe(self.config.subject)
                     .await
                     .map_err(Error::NatsSubscribe)?;
-                while let Some(event) = subscriber.next().await {
-                    let mut m = event.to_message().map_err(Error::NatsJetStreamMessage)?;
-                    m.current_task_index = Some(self.current_task_index);
-                    self.tx.send(m).map_err(Error::TokioSendMessage)?;
+                while let Some(message) = subscriber.next().await {
+                    let mut e = message.to_event().map_err(Error::NatsJetStreamMessage)?;
+                    e.current_task_id = Some(self.current_task_id);
+                    self.tx.send(e).map_err(Error::TokioSendMessage)?;
                 }
                 Ok(())
             });

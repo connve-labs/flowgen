@@ -4,7 +4,7 @@ use arrow::{
     ipc::writer::StreamWriter,
 };
 use chrono::Utc;
-use flowgen_core::message::Message;
+use flowgen_core::event::Event;
 use futures::future::TryJoinAll;
 use std::{fs::File, io::Seek, sync::Arc};
 use tokio::{sync::broadcast::Sender, task::JoinHandle};
@@ -18,7 +18,7 @@ pub enum Error {
     #[error("There was an error deserializing data into binary format.")]
     Arrow(#[source] arrow::error::ArrowError),
     #[error("There was an error with sending message over channel.")]
-    TokioSendMessage(#[source] tokio::sync::broadcast::error::SendError<Message>),
+    TokioSendMessage(#[source] tokio::sync::broadcast::error::SendError<Event>),
 }
 
 pub trait RecordBatchConverter {
@@ -61,12 +61,12 @@ impl Subscriber {
 /// A builder of the file reader.
 pub struct Builder {
     config: super::config::Source,
-    tx: Sender<Message>,
+    tx: Sender<Event>,
 }
 
 impl Builder {
     /// Creates a new instance of a Builder.
-    pub fn new(config: super::config::Source, tx: &Sender<Message>) -> Builder {
+    pub fn new(config: super::config::Source, tx: &Sender<Event>) -> Builder {
         Builder {
             config,
             tx: tx.clone(),

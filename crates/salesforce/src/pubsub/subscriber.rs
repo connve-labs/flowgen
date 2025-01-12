@@ -1,6 +1,6 @@
 use flowgen_core::{
     client::Client,
-    message::{Message, RecordBatchExt},
+    event::{Event, EventBuilder, RecordBatchExt},
 };
 use futures_util::future::TryJoinAll;
 use salesforce_pubsub::eventbus::v1::{FetchRequest, SchemaRequest, TopicRequest};
@@ -19,6 +19,8 @@ pub enum Error {
     FlowgenSalesforcePubSub(#[source] super::context::Error),
     #[error("There was an error with Salesforce authentication.")]
     FlowgenSalesforceAuth(#[source] crate::client::Error),
+    #[error("There was an error constructing Flowgen Event.")]
+    FlowgenEvent(#[source] flowgen_core::event::Error),
     #[error("There was an error executing async task.")]
     TokioJoin(#[source] tokio::task::JoinError),
     #[error("There was an error parsing value to avro schema.")]
@@ -26,7 +28,7 @@ pub enum Error {
     #[error("There was an error parsing value to an data entity.")]
     SerdeAvroValue(#[source] serde_avro_fast::de::DeError),
     #[error("There was an error with sending message over channel.")]
-    TokioSendMessage(#[source] tokio::sync::broadcast::error::SendError<Message>),
+    TokioSendMessage(#[source] tokio::sync::broadcast::error::SendError<Event>),
     #[error("There was an error deserializing data into binary format.")]
     Bincode(#[source] bincode::Error),
 }
@@ -55,8 +57,8 @@ impl Subscriber {
 pub struct Builder {
     service: flowgen_core::service::Service,
     config: super::config::Source,
-    tx: Sender<Message>,
-    current_task_index: usize,
+    tx: Sender<Event>,
+    current_task_id: usize,
 }
 
 impl Builder {
@@ -64,14 +66,14 @@ impl Builder {
     pub fn new(
         service: flowgen_core::service::Service,
         config: super::config::Source,
-        tx: &Sender<Message>,
-        current_task_index: usize,
+        tx: &Sender<Event>,
+        current_task_id: usize,
     ) -> Builder {
         Builder {
             service,
             config,
             tx: tx.clone(),
-            current_task_index,
+            current_task_id,
         }
     }
 
@@ -161,12 +163,14 @@ impl Builder {
                                         event.id
                                     );
 
-                                    let m = Message {
-                                        data,
-                                        subject,
-                                        current_task_index: Some(self.current_task_index),
-                                    };
-                                    tx.send(m).map_err(Error::TokioSendMessage)?;
+                                    let e = EventBuilder::new()
+                                        .data(data)
+                                        .subject(subject)
+                                        .current_task_id(self.current_task_id)
+                                        .build()
+                                        .map_err(Error::FlowgenEvent)?;
+
+                                    tx.send(e).map_err(Error::TokioSendMessage)?;
                                 }
                             }
                         }
