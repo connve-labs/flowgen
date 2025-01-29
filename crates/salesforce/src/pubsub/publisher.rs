@@ -1,3 +1,4 @@
+use chrono::Utc;
 use flowgen_core::{
     client::Client,
     event::Event,
@@ -5,6 +6,7 @@ use flowgen_core::{
     serde::{MapExt, StringExt},
 };
 use salesforce_pubsub::eventbus::v1::{ProducerEvent, PublishRequest, SchemaRequest, TopicRequest};
+use serde_avro_fast::{ser, Schema};
 use serde_json::{Map, Value};
 use std::{path::Path, sync::Arc};
 use tokio::sync::{broadcast::Receiver, Mutex};
@@ -77,6 +79,9 @@ impl flowgen_core::publisher::Publisher for Publisher {
         let topic_name = &self.config.topic;
         let schema_id = &schema_info.schema_id;
 
+        let schema: Schema = schema_info.schema_json.parse().unwrap();
+        let serializer_config = &mut ser::SerializerConfig::new(&schema);
+
         while let Ok(event) = self.rx.recv().await {
             if event.current_task_id == Some(self.current_task_id - 1) {
                 let mut data = Map::new();
@@ -84,7 +89,7 @@ impl flowgen_core::publisher::Publisher for Publisher {
                     for (key, input) in inputs {
                         let value = input.extract(&event.data, &event.extensions);
                         if let Ok(value) = value {
-                            data.insert(key.to_string(), Value::String(value.to_string()));
+                            data.insert(key.to_owned(), value);
                         }
                     }
                 }
@@ -99,14 +104,21 @@ impl flowgen_core::publisher::Publisher for Publisher {
                     .to_value()
                     .map_err(PublisherError::SerdeError)?;
 
-                let mut bytes: Vec<u8> = Vec::new();
-                serde_json::to_writer(&mut bytes, &payload)
-                    .map_err(PublisherError::SerdeJsonError)?;
+                println!("{:?}", payload);
+                let mut publish_payload: Map<String, Value> = Map::new();
+                for (k, v) in payload.as_object().unwrap() {
+                    publish_payload.insert(k.to_owned(), v.to_owned());
+                }
+                let now = Utc::now().timestamp_millis();
+                publish_payload.insert("CreatedDate".to_string(), Value::Number(now.into()));
+
+                let serialized_payload: Vec<u8> =
+                    serde_avro_fast::to_datum_vec(&publish_payload, serializer_config).unwrap();
 
                 let mut events = Vec::new();
                 let pe = ProducerEvent {
                     schema_id: schema_id.to_string(),
-                    payload: bytes,
+                    payload: serialized_payload,
                     ..Default::default()
                 };
                 events.push(pe);

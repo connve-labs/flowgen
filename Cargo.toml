@@ -13,3 +13,4 @@ publish = false
 [workspace.dependencies]
 handlebars = "6.3.0"
 arrow-json = "54.0.0"
+chrono = "0.4.39"

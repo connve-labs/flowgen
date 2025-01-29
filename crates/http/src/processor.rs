@@ -93,7 +93,7 @@ impl Builder {
                         for (key, input) in inputs {
                             let value = input.extract(&event.data, &event.extensions);
                             if let Ok(value) = value {
-                                data.insert(key.to_string(), value);
+                                data.insert(key.to_owned(), value);
                             }
                         }
                     }

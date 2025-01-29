@@ -2190,6 +2190,7 @@ dependencies = [
  "arrow 54.0.0",
  "bincode",
  "bytes",
+ "chrono",
  "flowgen_core",
  "futures-util",
  "handlebars",
