@@ -92,6 +92,21 @@ impl SubscriberBuilder {
         }
     }
 
+    pub fn config(mut self, config: Arc<super::config::Source>) -> Self {
+        self.config = Some(config);
+        self
+    }
+
+    pub fn sender(mut self, sender: Sender<Event>) -> Self {
+        self.tx = Some(sender);
+        self
+    }
+
+    pub fn current_task_id(mut self, current_task_id: usize) -> Self {
+        self.current_task_id = current_task_id;
+        self
+    }
+
     pub async fn build(self) -> Result<Subscriber, Error> {
         Ok(Subscriber {
             config: self
