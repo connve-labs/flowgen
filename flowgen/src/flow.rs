@@ -12,30 +12,30 @@ use tracing::{error, event, Level};
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
 pub enum Error {
-    #[error("Cannot open/read the credentials file at path {1}")]
+    #[error("errir reading a credentials file at path {1}")]
     OpenFile(#[source] std::io::Error, PathBuf),
-    #[error("Cannot parse config file")]
+    #[error("error parsing config file")]
     ParseConfig(#[source] serde_json::Error),
-    #[error("Cannot setup Flowgen Client")]
-    FlowgenService(#[source] flowgen_core::service::ServiceError),
-    #[error("Failed to setup Salesforce PubSub as flow source.")]
-    FlowgenSalesforcePubSubSubscriberError(#[source] flowgen_salesforce::pubsub::subscriber::Error),
-    #[error("Failed to setup Salesforce PubSub as flow source.")]
-    SalesforcePubsubPublisher(#[source] flowgen_salesforce::pubsub::publisher::PublisherError),
-    #[error("There was an error with processing http request.")]
-    HttpProcessorError(#[source] flowgen_http::processor::ProcessorError),
-    #[error("There was an error with Flowgen Nats JetStream Publisher.")]
-    FlowgenNatsJetStreamPublisher(#[source] flowgen_nats::jetstream::publisher::Error),
-    #[error("There was an error with Flowgen Nats JetStream Subscriber.")]
-    FlowgenNatsJetStreamSubscriber(#[source] flowgen_nats::jetstream::subscriber::Error),
-    #[error("There was an error with Flowgen Nats JetStream Event.")]
-    FlowgenNatsJetStreamEventError(#[source] flowgen_nats::jetstream::message::Error),
-    #[error("There was an error with Flowgen File Subscriber.")]
-    FlowgenFileSubscriberError(#[source] flowgen_file::subscriber::SubscriberError),
-    #[error("Failed to publish message to Nats Jetstream.")]
+    #[error("error setting up Flowgen Client")]
+    Service(#[source] flowgen_core::service::Error),
+    #[error("error setting up Salesforce PubSub as flow source")]
+    SalesforcePubSubSubscriber(#[source] flowgen_salesforce::pubsub::subscriber::Error),
+    #[error("error setting up Salesforce PubSub as flow source")]
+    SalesforcePubsubPublisher(#[source] flowgen_salesforce::pubsub::publisher::Error),
+    #[error("error processing http request")]
+    HttpProcessor(#[source] flowgen_http::processor::Error),
+    #[error("error with NATS JetStream Publisher")]
+    NatsJetStreamPublisher(#[source] flowgen_nats::jetstream::publisher::Error),
+    #[error("error with NATS JetStream Subscriber")]
+    NatsJetStreamSubscriber(#[source] flowgen_nats::jetstream::subscriber::Error),
+    #[error("error with NATS JetStream Event")]
+    NatsJetStreamEvent(#[source] flowgen_nats::jetstream::message::Error),
+    #[error("error with file subscriber")]
+    FileSubscriber(#[source] flowgen_file::subscriber::Error),
+    #[error("error publishing message to Nats Jetstream")]
     NatsPublish(#[source] async_nats::jetstream::context::PublishError),
-    #[error("Cannot execute async task.")]
-    TokioJoin(#[source] tokio::task::JoinError),
+    #[error("error execute async task")]
+    TaskJoin(#[source] tokio::task::JoinError),
 }
 
 #[derive(Debug)]
@@ -46,13 +46,13 @@ pub struct Flow {
 
 impl Flow {
     pub async fn run(mut self) -> Result<Self, Error> {
-        let service = flowgen_core::service::Builder::new()
+        let service = flowgen_core::service::ServiceBuilder::new()
             .with_endpoint(format!("{0}:443", "https://api.pubsub.salesforce.com"))
             .build()
-            .map_err(Error::FlowgenService)?
+            .map_err(Error::Service)?
             .connect()
             .await
-            .map_err(Error::FlowgenService)?;
+            .map_err(Error::Service)?;
 
         let config = &self.config;
         let mut handle_list: Vec<JoinHandle<Result<(), Error>>> = Vec::new();
@@ -70,19 +70,28 @@ impl Flow {
                         )
                         .build()
                         .await
-                        .map_err(Error::FlowgenSalesforcePubSubSubscriberError)?
+                        .map_err(Error::SalesforcePubSubSubscriber)?
                         .subscribe()
                         .await
-                        .map_err(Error::FlowgenSalesforcePubSubSubscriberError)?;
+                        .map_err(Error::SalesforcePubSubSubscriber)?;
                     }
                     config::Source::nats_jetstream(config) => {
-                        flowgen_nats::jetstream::subscriber::Builder::new(config.clone(), &tx, i)
-                            .build()
-                            .await
-                            .map_err(Error::FlowgenNatsJetStreamSubscriber)?
-                            .subscribe()
-                            .await
-                            .map_err(Error::FlowgenNatsJetStreamSubscriber)?;
+                        let config = Arc::new(config.to_owned());
+                        let tx = tx.clone();
+                        let handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
+                            flowgen_nats::jetstream::subscriber::SubscriberBuilder::new()
+                                .config(config)
+                                .sender(tx)
+                                .current_task_id(i)
+                                .build()
+                                .await
+                                .map_err(Error::NatsJetStreamSubscriber)?
+                                .subscribe()
+                                .await
+                                .map_err(Error::NatsJetStreamSubscriber)?;
+                            Ok(())
+                        });
+                        handle_list.push(handle);
                     }
                     _ => {}
                 },
@@ -99,15 +108,13 @@ impl Flow {
                                 .current_task_id(i)
                                 .build()
                                 .await
-                                .map_err(Error::HttpProcessorError)?
+                                .map_err(Error::HttpProcessor)?
                                 .process()
                                 .await
-                                .map_err(Error::HttpProcessorError)?;
+                                .map_err(Error::HttpProcessor)?;
 
                             Ok(())
                         });
-                        // let err = handle.await.unwrap_err();
-                        // println!("{:?}", err);
                         handle_list.push(handle);
                     }
                 },
@@ -117,7 +124,7 @@ impl Flow {
                             flowgen_nats::jetstream::publisher::Builder::new(config.clone())
                                 .build()
                                 .await
-                                .map_err(Error::FlowgenNatsJetStreamPublisher)?;
+                                .map_err(Error::NatsJetStreamPublisher)?;
                         let publisher = Arc::new(publisher);
 
                         {
@@ -126,9 +133,8 @@ impl Flow {
                             let handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
                                 while let Ok(e) = rx.recv().await {
                                     if e.current_task_id == Some(i - 1) {
-                                        let event = e
-                                            .to_publish()
-                                            .map_err(Error::FlowgenNatsJetStreamEventError)?;
+                                        let event =
+                                            e.to_publish().map_err(Error::NatsJetStreamEvent)?;
 
                                         publisher
                                             .jetstream

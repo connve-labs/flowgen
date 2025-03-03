@@ -19,25 +19,25 @@ struct Credentials {
 }
 
 #[derive(thiserror::Error, Debug)]
-pub enum ProcessorError {
-    #[error("There was an error reading/writing/seeking file.")]
-    IOError(#[source] std::io::Error),
-    #[error("There was an error executing async task.")]
-    JoinError(#[source] tokio::task::JoinError),
-    #[error("There was an error with sending event over channel.")]
-    SendMessageError(#[source] tokio::sync::broadcast::error::SendError<Event>),
-    #[error("There was an error constructing Flowgen Event.")]
-    EventError(#[source] flowgen_core::event::EventError),
-    #[error("There was an error with parsing credentials file.")]
-    ParseCredentialsError(#[source] serde_json::Error),
-    #[error("There was an error with processing record batch.")]
-    RecordBatchError(#[source] flowgen_core::recordbatch::RecordBatchError),
-    #[error("There was an error with rendering a given value.")]
-    RenderError(#[source] flowgen_core::render::RenderError),
-    #[error("There was an error with processing a request.")]
-    RequestError(#[source] reqwest::Error),
-    #[error("Missing required event attrubute.")]
-    MissingRequiredAttributeError(String),
+pub enum Error {
+    #[error("error with reading file")]
+    IO(#[source] std::io::Error),
+    #[error("error with executing async task")]
+    TaskJoin(#[source] tokio::task::JoinError),
+    #[error("error with sending event over channel")]
+    SendMessage(#[source] tokio::sync::broadcast::error::SendError<Event>),
+    #[error("error with creating event")]
+    Event(#[source] flowgen_core::event::Error),
+    #[error("error with parsing credentials file")]
+    ParseCredentials(#[source] serde_json::Error),
+    #[error("error with processing recordbatch")]
+    RecordBatch(#[source] flowgen_core::recordbatch::Error),
+    #[error("error with rendering content")]
+    Render(#[source] flowgen_core::render::Error),
+    #[error("error with processing http request")]
+    Request(#[source] reqwest::Error),
+    #[error("missing required attrubute")]
+    MissingRequiredAttribute(String),
 }
 pub struct Processor {
     config: Arc<super::config::Processor>,
@@ -47,13 +47,13 @@ pub struct Processor {
 }
 
 impl Processor {
-    pub async fn process(mut self) -> Result<(), ProcessorError> {
+    pub async fn process(mut self) -> Result<(), Error> {
         let mut handle_list = Vec::new();
 
         let client = reqwest::ClientBuilder::new()
             .https_only(true)
             .build()
-            .map_err(ProcessorError::RequestError)?;
+            .map_err(Error::Request)?;
 
         let client = Arc::new(client);
 
@@ -62,7 +62,7 @@ impl Processor {
             let client = Arc::clone(&client);
             let tx = self.tx.clone();
 
-            let handle: JoinHandle<Result<(), ProcessorError>> = tokio::spawn(async move {
+            let handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
                 if event.current_task_id == Some(self.current_task_id - 1) {
                     let mut data = Map::new();
                     if let Some(inputs) = &config.inputs {
@@ -74,42 +74,36 @@ impl Processor {
                         }
                     }
 
-                    let endpoint = config
-                        .endpoint
-                        .render(&data)
-                        .map_err(ProcessorError::RenderError)?;
+                    let endpoint = config.endpoint.render(&data).map_err(Error::Render)?;
 
                     let client = client.get(endpoint);
                     let mut resp = String::new();
 
                     if let Some(ref credentials) = config.credentials {
-                        let credentials_string = fs::read_to_string(credentials)
-                            .await
-                            .map_err(ProcessorError::IOError)?;
+                        let credentials_string =
+                            fs::read_to_string(credentials).await.map_err(Error::IO)?;
 
                         let credentials: Credentials = serde_json::from_str(&credentials_string)
-                            .map_err(ProcessorError::ParseCredentialsError)?;
+                            .map_err(Error::ParseCredentials)?;
 
                         if let Some(bearer_token) = credentials.bearer_auth {
                             resp = client
                                 .bearer_auth(bearer_token)
                                 .send()
                                 .await
-                                .map_err(ProcessorError::RequestError)?
+                                .map_err(Error::Request)?
                                 .text()
                                 .await
-                                .map_err(ProcessorError::RequestError)?;
+                                .map_err(Error::Request)?;
                         }
                     };
 
-                    let recordbatch = resp
-                        .to_recordbatch()
-                        .map_err(ProcessorError::RecordBatchError)?;
+                    let recordbatch = resp.to_recordbatch().map_err(Error::RecordBatch)?;
 
                     let extensions = Value::Object(data)
                         .to_string()
                         .to_recordbatch()
-                        .map_err(ProcessorError::RecordBatchError)?;
+                        .map_err(Error::RecordBatch)?;
 
                     let subject = "http.response.out".to_string();
 
@@ -119,9 +113,9 @@ impl Processor {
                         .subject(subject)
                         .current_task_id(self.current_task_id)
                         .build()
-                        .map_err(ProcessorError::EventError)?;
+                        .map_err(Error::Event)?;
 
-                    tx.send(e).map_err(ProcessorError::SendMessageError)?;
+                    tx.send(e).map_err(Error::SendMessage)?;
                 }
                 Ok(())
             });
@@ -134,7 +128,6 @@ impl Processor {
     }
 }
 
-/// A builder of the http processor.
 #[derive(Default)]
 pub struct ProcessorBuilder {
     config: Option<Arc<super::config::Processor>>,
@@ -170,17 +163,17 @@ impl ProcessorBuilder {
         self
     }
 
-    pub async fn build(self) -> Result<Processor, ProcessorError> {
+    pub async fn build(self) -> Result<Processor, Error> {
         Ok(Processor {
-            config: self.config.ok_or_else(|| {
-                ProcessorError::MissingRequiredAttributeError("config".to_string())
-            })?,
-            rx: self.rx.ok_or_else(|| {
-                ProcessorError::MissingRequiredAttributeError("receiver".to_string())
-            })?,
-            tx: self.tx.ok_or_else(|| {
-                ProcessorError::MissingRequiredAttributeError("sender".to_string())
-            })?,
+            config: self
+                .config
+                .ok_or_else(|| Error::MissingRequiredAttribute("config".to_string()))?,
+            rx: self
+                .rx
+                .ok_or_else(|| Error::MissingRequiredAttribute("receiver".to_string()))?,
+            tx: self
+                .tx
+                .ok_or_else(|| Error::MissingRequiredAttribute("sender".to_string()))?,
             current_task_id: self.current_task_id,
         })
     }

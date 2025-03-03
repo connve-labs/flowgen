@@ -5,17 +5,17 @@ use flowgen_core::client::Client;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    #[error("Failed to connect to a Nats Server.")]
+    #[error("failed to connect to a NATS Server")]
     NatsClientAuth(#[source] crate::client::Error),
-    #[error("Nats Client is missing / not initialized properly.")]
-    NatsClientMissing(),
-    #[error("Failed to publish message to Nats Jetstream.")]
+    #[error("NATS Client is missing / not initialized properly")]
+    MissingNatsClient(),
+    #[error("error publish message to NATS Jetstream")]
     NatsPublish(#[source] async_nats::jetstream::context::PublishError),
-    #[error("Failed to create or update Nats Jetstream.")]
+    #[error("failed to create or update Nats Jetstream")]
     NatsCreateStream(#[source] async_nats::jetstream::context::CreateStreamError),
-    #[error("Failed to get Nats Jetstream.")]
+    #[error("failed to get NATS Jetstream")]
     NatsGetStream(#[source] async_nats::jetstream::context::GetStreamError),
-    #[error("Failed to get process request to Nats Server.")]
+    #[error("failed to get process request to NATS Server")]
     NatsRequest(#[source] async_nats::jetstream::context::RequestError),
 }
 
@@ -35,17 +35,15 @@ impl Builder {
 
     pub async fn build(self) -> Result<Publisher, Error> {
         // Connect to Nats Server.
-        let client = crate::client::Builder::new()
-            .with_credentials_path(self.config.credentials.into())
+        let client = crate::client::ClientBuilder::new()
+            .credentials_path(self.config.credentials.into())
             .build()
             .map_err(Error::NatsClientAuth)?
             .connect()
             .await
             .map_err(Error::NatsClientAuth)?;
 
-        if let Some(nats_client) = client.nats_client {
-            let jetstream = async_nats::jetstream::new(nats_client);
-
+        if let Some(jetstream) = client.jetstream {
             let mut max_age = 86400;
             if let Some(config_max_age) = self.config.max_age {
                 max_age = config_max_age
@@ -53,7 +51,7 @@ impl Builder {
 
             // Create or update stream according to config.
             let mut stream_config = Config {
-                name: self.config.stream_name.clone(),
+                name: self.config.stream.clone(),
                 description: self.config.stream_description,
                 max_messages_per_subject: 1,
                 subjects: self.config.subjects.clone(),
@@ -63,7 +61,7 @@ impl Builder {
                 ..Default::default()
             };
 
-            let stream = jetstream.get_stream(self.config.stream_name).await;
+            let stream = jetstream.get_stream(self.config.stream).await;
 
             match stream {
                 Ok(_) => {
@@ -96,7 +94,7 @@ impl Builder {
 
             Ok(Publisher { jetstream })
         } else {
-            Err(Error::NatsClientMissing())
+            Err(Error::MissingNatsClient())
         }
     }
 }

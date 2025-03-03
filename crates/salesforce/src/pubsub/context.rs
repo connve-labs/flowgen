@@ -5,15 +5,15 @@ use tokio_stream::StreamExt;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    #[error("Client is missing")]
-    ClientMissing(),
-    #[error("TokenResponse is missing")]
-    TokenResponseMissing(),
-    #[error("Service channel is missing")]
-    ServiceChannelMissing(),
-    #[error("Invalid metadata value")]
+    #[error("client missing")]
+    MissingClient(),
+    #[error("token response missing")]
+    MissingTokenResponse(),
+    #[error("service channel missing")]
+    MissingServiceChannel(),
+    #[error("invalid metadata value")]
     InvalidMetadataValue(#[source] tonic::metadata::errors::InvalidMetadataValue),
-    #[error("There was an error with RPC call")]
+    #[error("error error with RPC call")]
     RPCFailed(#[source] tonic::Status),
 }
 
@@ -157,12 +157,12 @@ impl Builder {
 
     /// Generates a new PubSub context.
     pub fn build(&self) -> Result<Context, Error> {
-        let client = self.client.as_ref().ok_or_else(Error::ClientMissing)?;
+        let client = self.client.as_ref().ok_or_else(Error::MissingClient)?;
 
         let auth_header: tonic::metadata::AsciiMetadataValue = client
             .token_result
             .as_ref()
-            .ok_or_else(Error::TokenResponseMissing)?
+            .ok_or_else(Error::MissingTokenResponse)?
             .access_token()
             .secret()
             .parse()
@@ -188,7 +188,7 @@ impl Builder {
             self.service
                 .channel
                 .to_owned()
-                .ok_or_else(Error::ServiceChannelMissing)?,
+                .ok_or_else(Error::MissingServiceChannel)?,
             interceptor,
         );
 
@@ -204,18 +204,22 @@ mod tests {
 
     #[test]
     fn test_build_missing_client() {
-        let service = flowgen_core::service::Builder::new().build().unwrap();
+        let service = flowgen_core::service::ServiceBuilder::new()
+            .build()
+            .unwrap();
         let client = Builder::new(service).build();
-        assert!(matches!(client, Err(Error::ClientMissing(..))));
+        assert!(matches!(client, Err(Error::MissingClient(..))));
     }
     #[test]
     fn test_build_missing_token() {
-        let service = flowgen_core::service::Builder::new().build().unwrap();
+        let service = flowgen_core::service::ServiceBuilder::new()
+            .build()
+            .unwrap();
         let creds: &str = r#"
             {
                 "client_id": "some_client_id",
-                "client_secret": "some_client_secret", 
-                "instance_url": "https://mydomain.salesforce.com", 
+                "client_secret": "some_client_secret",
+                "instance_url": "https://mydomain.salesforce.com",
                 "tenant_id": "some_tenant_id"
             }"#;
         let mut path = PathBuf::new();
@@ -227,6 +231,6 @@ mod tests {
             .unwrap();
         let _ = fs::remove_file(path);
         let pubsub = Builder::new(service).with_client(client).build();
-        assert!(matches!(pubsub, Err(Error::TokenResponseMissing(..))));
+        assert!(matches!(pubsub, Err(Error::MissingTokenResponse(..))));
     }
 }

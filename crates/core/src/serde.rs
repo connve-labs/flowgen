@@ -2,9 +2,9 @@ use std::str::FromStr;
 
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
-pub enum SerdeError {
-    #[error("There was an error parsing a given type.")]
-    Json(#[source] serde_json::Error),
+pub enum Error {
+    #[error("error parsing a given type")]
+    Parse(#[source] serde_json::Error),
 }
 pub trait MapExt {
     type Error;
@@ -15,9 +15,9 @@ impl<K, V> MapExt for serde_json::Map<K, V>
 where
     serde_json::Map<K, V>: serde::Serialize,
 {
-    type Error = SerdeError;
+    type Error = Error;
     fn to_string(&self) -> Result<String, Self::Error> {
-        let string = serde_json::to_string(self).map_err(SerdeError::Json)?;
+        let string = serde_json::to_string(self).map_err(Error::Parse)?;
         Ok(string)
     }
 }
@@ -28,9 +28,9 @@ pub trait StringExt {
 }
 
 impl StringExt for String {
-    type Error = SerdeError;
+    type Error = Error;
     fn to_value(&self) -> Result<serde_json::Value, Self::Error> {
-        let value = serde_json::Value::from_str(self).map_err(SerdeError::Json)?;
+        let value = serde_json::Value::from_str(self).map_err(Error::Parse)?;
         Ok(value)
     }
 }

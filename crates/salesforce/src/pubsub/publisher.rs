@@ -12,19 +12,19 @@ use std::{path::Path, sync::Arc};
 use tokio::sync::{broadcast::Receiver, Mutex};
 
 #[derive(thiserror::Error, Debug)]
-pub enum PublisherError {
-    #[error("There was an error with PubSub context.")]
-    SalesforcePubSubError(#[source] super::context::Error),
-    #[error("There was an error with Salesforce authentication.")]
-    SalesforceAuthError(#[source] crate::client::Error),
-    #[error("There was an error with parsing a given value.")]
-    SerdeError(#[source] flowgen_core::serde::SerdeError),
-    #[error("There was an error with parsing a given value.")]
-    SerdeJsonError(#[source] serde_json::error::Error),
-    #[error("There was an error with rendering a given value.")]
-    RenderError(#[source] flowgen_core::render::RenderError),
+pub enum Error {
+    #[error("error with PubSub context")]
+    SalesforcePubSub(#[source] super::context::Error),
+    #[error("error with Salesforce authentication")]
+    SalesforceAuth(#[source] crate::client::Error),
+    #[error("error with parsing a given value.")]
+    Serde(#[source] flowgen_core::serde::Error),
+    #[error("error with parsing a given value.")]
+    SerdeJson(#[source] serde_json::error::Error),
+    #[error("error with rendering a given value.")]
+    Render(#[source] flowgen_core::render::Error),
     #[error("Missing required event attrubute.")]
-    MissingRequiredAttributeError(String),
+    MissingRequiredAttribute(String),
 }
 
 pub struct Publisher {
@@ -35,22 +35,22 @@ pub struct Publisher {
 }
 
 impl flowgen_core::publisher::Publisher for Publisher {
-    type Error = PublisherError;
+    type Error = Error;
     async fn publish(mut self) -> Result<(), Self::Error> {
         let config = self.config.as_ref();
         let a = Path::new(&config.credentials);
         let sfdc_client = crate::client::Builder::new()
             .with_credentials_path(a.to_path_buf())
             .build()
-            .map_err(PublisherError::SalesforceAuthError)?
+            .map_err(Error::SalesforceAuth)?
             .connect()
             .await
-            .map_err(PublisherError::SalesforceAuthError)?;
+            .map_err(Error::SalesforceAuth)?;
 
         let pubsub = super::context::Builder::new(self.service)
             .with_client(sfdc_client)
             .build()
-            .map_err(PublisherError::SalesforcePubSubError)?;
+            .map_err(Error::SalesforcePubSub)?;
 
         let pubsub = Arc::new(Mutex::new(pubsub));
 
@@ -61,7 +61,7 @@ impl flowgen_core::publisher::Publisher for Publisher {
                 topic_name: self.config.topic.clone(),
             })
             .await
-            .map_err(PublisherError::SalesforcePubSubError)?
+            .map_err(Error::SalesforcePubSub)?
             .into_inner();
 
         let schema_info = pubsub
@@ -71,7 +71,7 @@ impl flowgen_core::publisher::Publisher for Publisher {
                 schema_id: topic_info.schema_id,
             })
             .await
-            .map_err(PublisherError::SalesforcePubSubError)?
+            .map_err(Error::SalesforcePubSub)?
             .into_inner();
 
         let pubsub = pubsub.clone();
@@ -98,11 +98,11 @@ impl flowgen_core::publisher::Publisher for Publisher {
                     .config
                     .payload
                     .to_string()
-                    .map_err(PublisherError::SerdeError)?
+                    .map_err(Error::Serde)?
                     .render(&data)
-                    .map_err(PublisherError::RenderError)?
+                    .map_err(Error::Render)?
                     .to_value()
-                    .map_err(PublisherError::SerdeError)?;
+                    .map_err(Error::Serde)?;
 
                 let mut publish_payload: Map<String, Value> = Map::new();
                 for (k, v) in payload.as_object().unwrap() {
@@ -131,7 +131,7 @@ impl flowgen_core::publisher::Publisher for Publisher {
                         ..Default::default()
                     })
                     .await
-                    .map_err(PublisherError::SalesforcePubSubError)?;
+                    .map_err(Error::SalesforcePubSub)?;
 
                 println!("{:?}", resp);
             }
@@ -175,17 +175,17 @@ impl PublisherBuilder {
         self
     }
 
-    pub async fn build(self) -> Result<Publisher, PublisherError> {
+    pub async fn build(self) -> Result<Publisher, Error> {
         Ok(Publisher {
-            service: self.service.ok_or_else(|| {
-                PublisherError::MissingRequiredAttributeError("service".to_string())
-            })?,
-            config: self.config.ok_or_else(|| {
-                PublisherError::MissingRequiredAttributeError("config".to_string())
-            })?,
-            rx: self.rx.ok_or_else(|| {
-                PublisherError::MissingRequiredAttributeError("receiver".to_string())
-            })?,
+            service: self
+                .service
+                .ok_or_else(|| Error::MissingRequiredAttribute("service".to_string()))?,
+            config: self
+                .config
+                .ok_or_else(|| Error::MissingRequiredAttribute("config".to_string()))?,
+            rx: self
+                .rx
+                .ok_or_else(|| Error::MissingRequiredAttribute("receiver".to_string()))?,
             current_task_id: self.current_task_id,
         })
     }

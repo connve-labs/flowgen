@@ -1,10 +1,10 @@
 #[derive(thiserror::Error, Debug)]
-pub enum ServiceError {
-    #[error("An error resulting from a failed attempt to construct a URI")]
+pub enum Error {
+    #[error("error resulting from a failed attempt to construct a URI")]
     InvalidUri(#[source] tonic::codegen::http::uri::InvalidUri),
-    #[error("Error that originate from the client or server")]
+    #[error("errror that originate from the client or server")]
     TransportError(#[source] tonic::transport::Error),
-    #[error("Error that originate from the client or server")]
+    #[error("error that originate from the client or server")]
     MissingEndpoint(),
 }
 
@@ -15,34 +15,33 @@ pub struct Service {
 }
 
 impl super::client::Client for Service {
-    type Error = ServiceError;
+    type Error = Error;
     async fn connect(mut self) -> Result<Self, Self::Error> {
         if let Some(endpoint) = self.endpoint.take() {
             let tls_config = tonic::transport::ClientTlsConfig::new();
             let channel = tonic::transport::Channel::from_shared(endpoint)
-                .map_err(ServiceError::InvalidUri)?
+                .map_err(Error::InvalidUri)?
                 .tls_config(tls_config)
-                .map_err(ServiceError::TransportError)?
+                .map_err(Error::TransportError)?
                 .connect()
                 .await
-                .map_err(ServiceError::TransportError)?;
+                .map_err(Error::TransportError)?;
             self.channel = Some(channel);
             Ok(self)
         } else {
-            Err(ServiceError::MissingEndpoint())
+            Err(Error::MissingEndpoint())
         }
     }
 }
 
 #[derive(Default)]
-pub struct Builder {
+pub struct ServiceBuilder {
     endpoint: Option<String>,
 }
 
-impl Builder {
-    #[allow(clippy::new_ret_no_self)]
+impl ServiceBuilder {
     pub fn new() -> Self {
-        Builder {
+        ServiceBuilder {
             ..Default::default()
         }
     }
@@ -52,7 +51,7 @@ impl Builder {
         self
     }
 
-    pub fn build(&mut self) -> Result<Service, ServiceError> {
+    pub fn build(&mut self) -> Result<Service, Error> {
         Ok(Service {
             endpoint: self.endpoint.take(),
             channel: None,

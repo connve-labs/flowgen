@@ -8,10 +8,10 @@ use std::sync::Arc;
 
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
-pub enum InputError {
-    #[error("There was an error with an Apache Arrow data.")]
-    ArrowError(#[source] arrow::error::ArrowError),
-    #[error("There is not data available in the array.")]
+pub enum Error {
+    #[error("error with an Apache Arrow data")]
+    Arrow(#[source] arrow::error::ArrowError),
+    #[error("no data available in the array")]
     EmptyArray(),
 }
 
@@ -24,7 +24,7 @@ pub struct Input {
     pub nested: Option<Box<Self>>,
 }
 
-fn extract_from_array(array: &Arc<dyn Array>, input: &Input) -> Result<Value, InputError> {
+fn extract_from_array(array: &Arc<dyn Array>, input: &Input) -> Result<Value, Error> {
     let mut value = Value::Null;
     let data_type = array.data_type();
     match data_type {
@@ -32,7 +32,7 @@ fn extract_from_array(array: &Arc<dyn Array>, input: &Input) -> Result<Value, In
             let array_data = array.as_any().downcast_ref::<StringArray>();
             value = Value::String(
                 array_data
-                    .ok_or_else(InputError::EmptyArray)?
+                    .ok_or_else(Error::EmptyArray)?
                     .value(input.index)
                     .to_string()
                     .to_string(),
@@ -40,9 +40,7 @@ fn extract_from_array(array: &Arc<dyn Array>, input: &Input) -> Result<Value, In
         }
         DataType::List(_) => {
             let array_data = array.as_any().downcast_ref::<ListArray>();
-            let nested_array = array_data
-                .ok_or_else(InputError::EmptyArray)?
-                .value(input.index);
+            let nested_array = array_data.ok_or_else(Error::EmptyArray)?.value(input.index);
             if let Some(nested_input) = &input.nested {
                 let input = &Input {
                     value: nested_input.value.clone(),
@@ -59,9 +57,9 @@ fn extract_from_array(array: &Arc<dyn Array>, input: &Input) -> Result<Value, In
         DataType::Struct(_) => {
             let array_data = array.as_any().downcast_ref::<StructArray>();
             let nested_array = array_data
-                .ok_or_else(InputError::EmptyArray)?
+                .ok_or_else(Error::EmptyArray)?
                 .column_by_name(&input.value)
-                .ok_or_else(InputError::EmptyArray)?;
+                .ok_or_else(Error::EmptyArray)?;
 
             if let Some(nested_input) = &input.nested {
                 let input = &Input {
@@ -86,7 +84,7 @@ impl Input {
         &self,
         data: &arrow::array::RecordBatch,
         extensions: &Option<arrow::array::RecordBatch>,
-    ) -> Result<Value, InputError> {
+    ) -> Result<Value, Error> {
         let mut value = Value::Null;
         if !self.is_extension {
             let array: Option<&Arc<dyn Array>> = data.column_by_name(&self.value);

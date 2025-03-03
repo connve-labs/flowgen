@@ -3,8 +3,8 @@ use serde::Serialize;
 
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
-pub enum RenderError {
-    #[error("There was an issue with rendering string with data.")]
+pub enum Error {
+    #[error("error with rendering content")]
     Render(#[source] handlebars::RenderError),
 }
 pub trait Render {
@@ -15,7 +15,7 @@ pub trait Render {
 }
 
 impl Render for str {
-    type Error = RenderError;
+    type Error = Error;
     fn render<T>(&self, data: &T) -> Result<String, Self::Error>
     where
         T: Serialize,
@@ -23,7 +23,7 @@ impl Render for str {
         let handlebars = Handlebars::new();
         let rendered = handlebars
             .render_template(self, &data)
-            .map_err(RenderError::Render)?;
+            .map_err(Error::Render)?;
         Ok(rendered)
     }
 }
