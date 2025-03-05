@@ -1,9 +1,8 @@
 use super::message::NatsMessageExt;
 use async_nats::jetstream::{self};
 use flowgen_core::{client::Client, event::Event};
-use futures_util::future::try_join_all;
 use std::{sync::Arc, time::Duration};
-use tokio::{sync::broadcast::Sender, task::JoinHandle, time::sleep};
+use tokio::{sync::broadcast::Sender, time};
 use tokio_stream::StreamExt;
 
 #[derive(thiserror::Error, Debug)]
@@ -38,8 +37,6 @@ pub struct Subscriber {
 
 impl Subscriber {
     pub async fn subscribe(self) -> Result<(), Error> {
-        let mut handle_list: Vec<JoinHandle<Result<(), Error>>> = Vec::new();
-
         let client = crate::client::ClientBuilder::new()
             .credentials_path(self.config.credentials.clone().into())
             .build()
@@ -49,45 +46,41 @@ impl Subscriber {
             .map_err(Error::NatsClient)?;
 
         if let Some(jetstream) = client.jetstream {
-            let handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
-                let consumer = jetstream
-                    .get_stream(self.config.stream.clone())
+            let consumer = jetstream
+                .get_stream(self.config.stream.clone())
+                .await
+                .map_err(Error::NatsJetStreamGetStream)?
+                .get_or_create_consumer(
+                    &self.config.durable_name,
+                    jetstream::consumer::pull::Config {
+                        durable_name: Some(self.config.durable_name.clone()),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .map_err(Error::NatsJetStreamConsumer)?;
+
+            loop {
+                if let Some(delay_secs) = self.config.delay_secs {
+                    time::sleep(Duration::from_secs(delay_secs)).await
+                }
+
+                let mut stream = consumer
+                    .messages()
                     .await
-                    .map_err(Error::NatsJetStreamGetStream)?
-                    .get_or_create_consumer(
-                        &self.config.durable_name,
-                        jetstream::consumer::pull::Config {
-                            durable_name: Some(self.config.durable_name.clone()),
-                            ..Default::default()
-                        },
-                    )
-                    .await
-                    .map_err(Error::NatsJetStreamConsumer)?;
+                    .map_err(Error::NatsJetStream)?
+                    .take(self.config.batch_size);
 
-                loop {
-                    let mut stream = consumer
-                        .messages()
-                        .await
-                        .map_err(Error::NatsJetStream)?
-                        .take(self.config.batch_size);
-
-                    while let Some(message) = stream.next().await {
-                        if let Ok(message) = message {
-                            let mut e = message.to_event().map_err(Error::NatsJetStreamMessage)?;
-                            message.ack().await.map_err(Error::Other)?;
-                            e.current_task_id = Some(self.current_task_id);
-                            self.tx.send(e).map_err(Error::SendMessage)?;
-                        }
-                    }
-
-                    if let Some(delay_secs) = self.config.delay_secs {
-                        sleep(Duration::from_secs(delay_secs)).await;
+                while let Some(message) = stream.next().await {
+                    if let Ok(message) = message {
+                        let mut e = message.to_event().map_err(Error::NatsJetStreamMessage)?;
+                        message.ack().await.map_err(Error::Other)?;
+                        e.current_task_id = Some(self.current_task_id);
+                        self.tx.send(e).map_err(Error::SendMessage)?;
                     }
                 }
-            });
-            handle_list.push(handle);
+            }
         }
-        let _ = try_join_all(handle_list.iter_mut()).await;
         Ok(())
     }
 }
