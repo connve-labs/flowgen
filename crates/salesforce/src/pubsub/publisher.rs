@@ -53,7 +53,7 @@ impl flowgen_core::publisher::Publisher for Publisher {
         let a = Path::new(&config.credentials);
 
         let service = flowgen_core::service::ServiceBuilder::new()
-            .with_endpoint(format!("{0}:{1}", DEFAULT_PUBSUB_URI, DEFAULT_PUBSUB_PORT))
+            .endpoint(format!("{0}:{1}", DEFAULT_PUBSUB_URI, DEFAULT_PUBSUB_PORT))
             .build()
             .map_err(Error::Service)?
             .connect()
@@ -61,7 +61,7 @@ impl flowgen_core::publisher::Publisher for Publisher {
             .map_err(Error::Service)?;
 
         let sfdc_client = crate::client::Builder::new()
-            .with_credentials_path(a.to_path_buf())
+            .credentials_path(a.to_path_buf())
             .build()
             .map_err(Error::SalesforceAuth)?
             .connect()

@@ -46,7 +46,7 @@ impl ServiceBuilder {
         }
     }
 
-    pub fn with_endpoint(&mut self, endpoint: String) -> &mut Self {
+    pub fn endpoint(&mut self, endpoint: String) -> &mut Self {
         self.endpoint = Some(endpoint);
         self
     }

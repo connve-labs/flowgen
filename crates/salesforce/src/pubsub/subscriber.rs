@@ -53,7 +53,7 @@ pub struct Subscriber {
 impl Subscriber {
     pub async fn subscribe(self) -> Result<(), Error> {
         let service = flowgen_core::service::ServiceBuilder::new()
-            .with_endpoint(format!("{0}:{1}", DEFAULT_PUBSUB_URI, DEFAULT_PUBSUB_PORT))
+            .endpoint(format!("{0}:{1}", DEFAULT_PUBSUB_URI, DEFAULT_PUBSUB_PORT))
             .build()
             .map_err(Error::Service)?
             .connect()
@@ -61,7 +61,7 @@ impl Subscriber {
             .map_err(Error::Service)?;
 
         let sfdc_client = crate::client::Builder::new()
-            .with_credentials_path(self.config.credentials.clone().into())
+            .credentials_path(self.config.credentials.clone().into())
             .build()
             .map_err(Error::SalesforceAuth)?
             .connect()

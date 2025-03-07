@@ -87,7 +87,7 @@ impl Builder {
         Builder::default()
     }
     /// Pass path to the fail so that credentials can be loaded.
-    pub fn with_credentials_path(&mut self, credentials_path: PathBuf) -> &mut Builder {
+    pub fn credentials_path(&mut self, credentials_path: PathBuf) -> &mut Builder {
         self.credentials_path = credentials_path;
         self
     }
@@ -143,7 +143,7 @@ mod tests {
         let mut path = PathBuf::new();
         path.push("invalid_credentials.json");
         let _ = fs::write(path.clone(), creds);
-        let client = Builder::new().with_credentials_path(path.clone()).build();
+        let client = Builder::new().credentials_path(path.clone()).build();
         let _ = fs::remove_file(path);
         assert!(matches!(client, Err(Error::ParseCredentials(..))));
     }
@@ -153,14 +153,14 @@ mod tests {
         let creds: &str = r#"
             {
                 "client_id": "some_client_id",
-                "client_secret": "some_client_secret", 
-                "instance_url": "mydomain.salesforce.com", 
+                "client_secret": "some_client_secret",
+                "instance_url": "mydomain.salesforce.com",
                 "tenant_id": "some_tenant_id"
             }"#;
         let mut path = PathBuf::new();
         path.push("invalid_url_credentials.json");
         let _ = fs::write(path.clone(), creds);
-        let client = Builder::new().with_credentials_path(path.clone()).build();
+        let client = Builder::new().credentials_path(path.clone()).build();
         let _ = fs::remove_file(path);
         assert!(matches!(client, Err(Error::ParseUrl(..))));
     }
@@ -170,14 +170,14 @@ mod tests {
         let creds: &str = r#"
             {
                 "client_id": "some_client_id",
-                "client_secret": "some_client_secret", 
-                "instance_url": "https://mydomain.salesforce.com", 
+                "client_secret": "some_client_secret",
+                "instance_url": "https://mydomain.salesforce.com",
                 "tenant_id": "some_tenant_id"
             }"#;
         let mut path = PathBuf::new();
         path.push("credentials.json");
         let _ = fs::write(path.clone(), creds);
-        let client = Builder::new().with_credentials_path(path.clone()).build();
+        let client = Builder::new().credentials_path(path.clone()).build();
         let _ = fs::remove_file(path);
         assert!(client.is_ok());
     }

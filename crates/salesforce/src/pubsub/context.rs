@@ -226,7 +226,7 @@ mod tests {
         path.push("credentials.json");
         let _ = fs::write(path.clone(), creds);
         let client = client::Builder::new()
-            .with_credentials_path(path.clone())
+            .credentials_path(path.clone())
             .build()
             .unwrap();
         let _ = fs::remove_file(path);
