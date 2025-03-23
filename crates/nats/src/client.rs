@@ -35,7 +35,7 @@ pub struct Client {
     pub jetstream: Option<async_nats::jetstream::Context>,
 }
 
-impl flowgen_core::client::Client for Client {
+impl flowgen_core::connect::client::Client for Client {
     type Error = Error;
     /// Connect to the NATS Server with provided options.
     async fn connect(mut self) -> Result<Self, Error> {

@@ -1,13 +1,13 @@
 use arrow::ipc::{reader::StreamDecoder, writer::StreamWriter};
 use async_nats::jetstream::context::Publish;
-use flowgen_core::event::EventBuilder;
+use flowgen_core::stream::event::EventBuilder;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("error with an Apache Arrow data")]
     Arrow(#[source] arrow::error::ArrowError),
     #[error("error constructing event")]
-    Event(#[source] flowgen_core::event::Error),
+    Event(#[source] flowgen_core::stream::event::Error),
     #[error("error getting recordbatch")]
     NoRecordBatch(),
 }
@@ -19,10 +19,10 @@ pub trait FlowgenMessageExt {
 
 pub trait NatsMessageExt {
     type Error;
-    fn to_event(&self) -> Result<flowgen_core::event::Event, Self::Error>;
+    fn to_event(&self) -> Result<flowgen_core::stream::event::Event, Self::Error>;
 }
 
-impl FlowgenMessageExt for flowgen_core::event::Event {
+impl FlowgenMessageExt for flowgen_core::stream::event::Event {
     type Error = Error;
     fn to_publish(&self) -> Result<Publish, Self::Error> {
         let buffer: Vec<u8> = Vec::new();
@@ -38,7 +38,7 @@ impl FlowgenMessageExt for flowgen_core::event::Event {
 
 impl NatsMessageExt for async_nats::Message {
     type Error = Error;
-    fn to_event(&self) -> Result<flowgen_core::event::Event, Self::Error> {
+    fn to_event(&self) -> Result<flowgen_core::stream::event::Event, Self::Error> {
         let mut buffer = arrow::buffer::Buffer::from_vec(self.payload.to_vec());
         let mut decoder = StreamDecoder::new();
 

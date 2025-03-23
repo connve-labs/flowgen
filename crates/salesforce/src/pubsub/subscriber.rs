@@ -1,7 +1,7 @@
 use flowgen_core::{
-    client::Client,
-    event::{Event, EventBuilder},
-    recordbatch::RecordBatchExt,
+    connect::client::Client,
+    convert::recordbatch::RecordBatchExt,
+    stream::event::{Event, EventBuilder},
 };
 use futures_util::future::try_join_all;
 use salesforce_pubsub::eventbus::v1::{FetchRequest, SchemaRequest, TopicRequest};
@@ -25,7 +25,7 @@ pub enum Error {
     #[error("error with Salesforce authentication")]
     SalesforceAuth(#[source] crate::client::Error),
     #[error("error constructing event")]
-    Event(#[source] flowgen_core::event::Error),
+    Event(#[source] flowgen_core::stream::event::Error),
     #[error("error executing async task")]
     TaskJoin(#[source] tokio::task::JoinError),
     #[error("error parsing value to avro schema")]
@@ -37,9 +37,9 @@ pub enum Error {
     #[error("error deserializing data into binary format")]
     Bincode(#[source] bincode::Error),
     #[error("error with processing record batch")]
-    RecordBatch(#[source] flowgen_core::recordbatch::Error),
+    RecordBatch(#[source] flowgen_core::convert::recordbatch::Error),
     #[error("error setting up flowgen grpc service")]
-    Service(#[source] flowgen_core::service::Error),
+    Service(#[source] flowgen_core::connect::service::Error),
     #[error("missing required attribute")]
     MissingRequiredAttribute(String),
 }
@@ -52,7 +52,7 @@ pub struct Subscriber {
 
 impl Subscriber {
     pub async fn subscribe(self) -> Result<(), Error> {
-        let service = flowgen_core::service::ServiceBuilder::new()
+        let service = flowgen_core::connect::service::ServiceBuilder::new()
             .endpoint(format!("{0}:{1}", DEFAULT_PUBSUB_URI, DEFAULT_PUBSUB_PORT))
             .build()
             .map_err(Error::Service)?

@@ -1,6 +1,6 @@
 use super::message::NatsMessageExt;
 use async_nats::jetstream::{self};
-use flowgen_core::{client::Client, event::Event};
+use flowgen_core::{connect::client::Client, stream::event::Event};
 use std::{sync::Arc, time::Duration};
 use tokio::{sync::broadcast::Sender, time};
 use tokio_stream::StreamExt;

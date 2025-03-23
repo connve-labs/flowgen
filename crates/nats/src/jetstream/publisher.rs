@@ -1,6 +1,7 @@
 use super::message::FlowgenMessageExt;
 use async_nats::jetstream::stream::{Config, DiscardPolicy, RetentionPolicy};
-use flowgen_core::{client::Client, event::Event};
+use flowgen_core::connect::client::Client;
+use flowgen_core::stream::event::Event;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::broadcast::Receiver;
 use tracing::{event, Level};
@@ -31,7 +32,7 @@ pub struct Publisher {
     current_task_id: usize,
 }
 
-impl flowgen_core::publisher::Publisher for Publisher {
+impl flowgen_core::stream::publisher::Publisher for Publisher {
     type Error = Error;
     async fn publish(mut self) -> Result<(), Self::Error> {
         let client = crate::client::ClientBuilder::new()

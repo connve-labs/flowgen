@@ -1,6 +1,6 @@
 use arrow::csv::WriterBuilder;
 use chrono::Utc;
-use flowgen_core::event::Event;
+use flowgen_core::stream::event::Event;
 use futures::future::try_join_all;
 use std::{fs::File, sync::Arc};
 use tokio::{sync::broadcast::Receiver, task::JoinHandle};
@@ -16,6 +16,10 @@ pub enum Error {
     Arrow(#[source] arrow::error::ArrowError),
     #[error("missing required event attrubute")]
     MissingRequiredAttribute(String),
+    #[error("no filename in provided path")]
+    EmptyFileName(),
+    #[error("no value in provided str")]
+    EmptyStr(),
 }
 
 pub struct Publisher {
@@ -24,7 +28,7 @@ pub struct Publisher {
     current_task_id: usize,
 }
 
-impl flowgen_core::publisher::Publisher for Publisher {
+impl flowgen_core::stream::publisher::Publisher for Publisher {
     type Error = Error;
     async fn publish(mut self) -> Result<(), Self::Error> {
         let mut handle_list = Vec::new();
@@ -33,7 +37,24 @@ impl flowgen_core::publisher::Publisher for Publisher {
             let config = Arc::clone(&self.config);
             let handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
                 if event.current_task_id == Some(self.current_task_id - 1) {
-                    let file = File::create(&config.path).map_err(Error::IO)?;
+                    let file_stem = config
+                        .path
+                        .file_stem()
+                        .ok_or_else(Error::EmptyFileName)?
+                        .to_str()
+                        .ok_or_else(Error::EmptyStr)?;
+
+                    let file_ext = config
+                        .path
+                        .extension()
+                        .ok_or_else(Error::EmptyFileName)?
+                        .to_str()
+                        .ok_or_else(Error::EmptyStr)?;
+
+                    let timestamp = Utc::now().timestamp_micros();
+                    let filename = format!("{}.{}.{}", file_stem, timestamp, file_ext);
+
+                    let file = File::create(filename).map_err(Error::IO)?;
 
                     WriterBuilder::new()
                         .with_header(true)
@@ -41,19 +62,10 @@ impl flowgen_core::publisher::Publisher for Publisher {
                         .write(&event.data)
                         .map_err(Error::Arrow)?;
 
-                    let timestamp = Utc::now().timestamp_micros();
-                    let subject = match &config.path.split("/").last() {
-                        Some(filename) => {
-                            format!(
-                                "{}.{}.{}",
-                                DEFAULT_MESSAGE_SUBJECT,
-                                filename.to_lowercase(),
-                                timestamp
-                            )
-                        }
-                        None => format!("{}.{}", DEFAULT_MESSAGE_SUBJECT, timestamp),
-                    };
-
+                    let subject = format!(
+                        "{}.{}.{}.{}",
+                        DEFAULT_MESSAGE_SUBJECT, file_stem, timestamp, file_ext
+                    );
                     event!(Level::INFO, "event published: {}", subject);
                 }
                 Ok(())

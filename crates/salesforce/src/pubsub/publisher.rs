@@ -1,9 +1,11 @@
 use chrono::Utc;
 use flowgen_core::{
-    client::Client,
-    event::Event,
-    render::Render,
-    serde::{MapExt, StringExt},
+    connect::client::Client,
+    convert::{
+        render::Render,
+        serde::{MapExt, StringExt},
+    },
+    stream::event::Event,
 };
 use salesforce_pubsub::eventbus::v1::{ProducerEvent, PublishRequest, SchemaRequest, TopicRequest};
 use serde_avro_fast::{ser, Schema};
@@ -23,21 +25,21 @@ pub enum Error {
     #[error("error with Salesforce authentication")]
     SalesforceAuth(#[source] crate::client::Error),
     #[error("error with parsing a given value")]
-    Serde(#[source] flowgen_core::serde::Error),
+    Serde(#[source] flowgen_core::convert::serde::Error),
     #[error("error with parsing a given value")]
     SerdeJson(#[source] serde_json::error::Error),
     #[error("error with rendering a given value")]
-    Render(#[source] flowgen_core::render::Error),
-    #[error("error with processing recordbatch")]
-    RecordBatch(#[source] flowgen_core::recordbatch::Error),
+    Render(#[source] flowgen_core::convert::render::Error),
+    #[error("error with processing Record Batch")]
+    RecordBatch(#[source] flowgen_core::convert::recordbatch::Error),
     #[error("missing required event attrubute")]
     MissingRequiredAttribute(String),
     #[error("error with sending event over channel")]
     SendMessage(#[source] tokio::sync::broadcast::error::SendError<Event>),
     #[error("error with creating event")]
-    Event(#[source] flowgen_core::event::Error),
+    Event(#[source] flowgen_core::stream::event::Error),
     #[error("error setting up flowgen grpc service")]
-    Service(#[source] flowgen_core::service::Error),
+    Service(#[source] flowgen_core::connect::service::Error),
 }
 
 pub struct Publisher {
@@ -46,13 +48,13 @@ pub struct Publisher {
     current_task_id: usize,
 }
 
-impl flowgen_core::publisher::Publisher for Publisher {
+impl flowgen_core::stream::publisher::Publisher for Publisher {
     type Error = Error;
     async fn publish(mut self) -> Result<(), Self::Error> {
         let config = self.config.as_ref();
         let a = Path::new(&config.credentials);
 
-        let service = flowgen_core::service::ServiceBuilder::new()
+        let service = flowgen_core::connect::service::ServiceBuilder::new()
             .endpoint(format!("{0}:{1}", DEFAULT_PUBSUB_URI, DEFAULT_PUBSUB_PORT))
             .build()
             .map_err(Error::Service)?

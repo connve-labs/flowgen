@@ -1,8 +1,7 @@
 use chrono::Utc;
 use flowgen_core::{
-    event::{Event, EventBuilder},
-    recordbatch::RecordBatchExt,
-    render::Render,
+    convert::{recordbatch::RecordBatchExt, render::Render},
+    stream::event::{Event, EventBuilder},
 };
 use futures_util::future::try_join_all;
 use serde::{Deserialize, Serialize};
@@ -31,13 +30,13 @@ pub enum Error {
     #[error("error with sending event over channel")]
     SendMessage(#[source] tokio::sync::broadcast::error::SendError<Event>),
     #[error("error with creating event")]
-    Event(#[source] flowgen_core::event::Error),
+    Event(#[source] flowgen_core::stream::event::Error),
     #[error("error with parsing credentials file")]
     ParseCredentials(#[source] serde_json::Error),
     #[error("error with processing recordbatch")]
-    RecordBatch(#[source] flowgen_core::recordbatch::Error),
+    RecordBatch(#[source] flowgen_core::convert::recordbatch::Error),
     #[error("error with rendering content")]
-    Render(#[source] flowgen_core::render::Error),
+    Render(#[source] flowgen_core::convert::render::Error),
     #[error("error with processing http request")]
     Request(#[source] reqwest::Error),
     #[error("missing required attrubute")]

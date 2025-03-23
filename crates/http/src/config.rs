@@ -1,4 +1,4 @@
-use flowgen_core::input::Input;
+use flowgen_core::config::input::Input;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

@@ -4,7 +4,7 @@ use arrow::{
     ipc::writer::StreamWriter,
 };
 use chrono::Utc;
-use flowgen_core::event::{Event, EventBuilder};
+use flowgen_core::stream::event::{Event, EventBuilder};
 use futures::future::try_join_all;
 use std::{fs::File, io::Seek, sync::Arc};
 use tokio::{sync::broadcast::Sender, task::JoinHandle};
@@ -23,7 +23,7 @@ pub enum Error {
     #[error("error with sending message over channel")]
     SendMessage(#[source] tokio::sync::broadcast::error::SendError<Event>),
     #[error("error constructing Flowgen Event")]
-    Event(#[source] flowgen_core::event::Error),
+    Event(#[source] flowgen_core::stream::event::Error),
     #[error("missing required event attrubute")]
     MissingRequiredAttribute(String),
 }
