@@ -27,7 +27,7 @@ pub enum Source {
 }
 
 #[derive(PartialEq, Clone, Debug, Deserialize, Serialize)]
-#[allow(non_camel_case_types)]
+#[allow(non_camel_case_types, clippy::large_enum_variant)]
 pub enum Processor {
     http(flowgen_http::config::Processor),
     enumerate(flowgen_core::task::enumerate::config::Processor),
