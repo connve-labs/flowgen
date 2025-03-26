@@ -117,30 +117,19 @@ impl Processor {
                     }
 
                     // Set client body to json from the provided json string.
-                    if let Some(payload_key) = &config.payload_json {
-                        let key = payload_key.replace("{{", "").replace("}}", "");
+                    if let Some(payload_json) = &config.payload_json {
+                        let key = payload_json.key.replace("{{", "").replace("}}", "");
                         let json_string = data.get(&key).ok_or_else(Error::NotFound)?;
                         let json = serde_json::from_str::<serde_json::Value>(
                             json_string.as_str().ok_or_else(Error::ParseJson)?,
                         )
                         .map_err(Error::SerdeJson)?;
 
-                        client = client.json(&json);
-                    }
-
-                    // Set client body to url enconded from the provided json string.
-                    if let Some(payload_key) = &config.payload_url_encoded {
-                        let key = payload_key.replace("{{", "").replace("}}", "");
-                        let json_string = data.get(&key).ok_or_else(Error::NotFound)?;
-                        let json = serde_json::from_str::<serde_json::Value>(
-                            json_string.as_str().ok_or_else(Error::ParseJson)?,
-                        )
-                        .map_err(Error::SerdeJson)?;
-
-                        match json {
-                            Value::Object(map) => client = client.form(&map),
-                            _ => return Err(Error::ParseJson()),
-                        };
+                        client = match payload_json.send_as {
+                            crate::config::PayloadSendAs::JSON => client.json(&json),
+                            crate::config::PayloadSendAs::URLENCODED => client.form(&json),
+                            crate::config::PayloadSendAs::QUERYPARAMS => client.query(&json),
+                        }
                     }
 
                     // Set client auth method & credentials.
