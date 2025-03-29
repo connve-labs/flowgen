@@ -1,11 +1,13 @@
 use arrow::csv::reader::Format;
 use arrow::csv::ReaderBuilder;
-use async_nats::jetstream::{object_store::Config, object_store::GetErrorKind};
-use flowgen_core::{connect::client::Client, stream::event::Event};
+use async_nats::jetstream::{context::ObjectStoreError,context::ObjectStoreErrorKind, object_store::{Config, GetErrorKind}};
+use flowgen_core::{connect::client::Client, stream::event::Event, stream::event::EventBuilder};
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
 use tokio::sync::broadcast::Sender;
 use tokio_stream::StreamExt;
+use chrono::Utc;
+use tracing::{event, Level};
 
 const DEFAULT_MESSAGE_SUBJECT: &str = "nats.object.store.in";
 const DEFAULT_BATCH_SIZE: usize = 1000;
@@ -34,7 +36,7 @@ pub enum Error {
     #[error("other error with subscriber")]
     Other(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error("failed to get nats bucket")]
-    NatsObjectStoreBucketError(#[source] async_nats::jetstream::context::CreateKeyValueError),
+    NatsObjectStoreBucketError(#[source] async_nats::error::Error<ObjectStoreErrorKind>),
     #[error("failed to get nats bucket")]
     NatsObjectStoreFileError(#[source] async_nats::error::Error<GetErrorKind>),
     #[error("failed to open file")]
@@ -70,14 +72,8 @@ impl Subscriber {
             .map_err(Error::NatsClient)?;
 
         if let Some(jetstream) = client.jetstream {
-            let bucket_name = self.config.bucket.clone();
-            let bucket = jetstream
-                .create_object_store(Config {
-                    bucket: bucket_name.to_string(),
-                    ..Default::default()
-                })
-                .await
-                .map_err(Error::NatsObjectStoreBucketError)?;
+            // let bucket_name = self.config.input_bucket.clone();
+            let bucket = jetstream.get_object_store(&self.config.input_bucket).await.map_err(Error::NatsObjectStoreBucketError)?;
             let mut objects_stream = bucket
                 .list()
                 .await
@@ -85,6 +81,8 @@ impl Subscriber {
 
             while let Some(Ok(object)) = objects_stream.next().await {
                 let file_name = object.name;
+
+                print!("Object Name:; {}", file_name);
 
                 // Fetch file from the bucket
                 let mut nats_obj_file = bucket
@@ -111,18 +109,25 @@ impl Subscriber {
                     .map_err(Error::Arrow)?;
 
                 for batch in csv {
-                    println!("{:?}", batch);
+                    let recordbatch = batch.map_err(Error::Arrow)?;
+                    let timestamp = Utc::now().timestamp_micros();
+                    let subject = format!("{}.{}.{}", DEFAULT_MESSAGE_SUBJECT, file_name, timestamp);
+
+                    let e = EventBuilder::new()
+                        .data(recordbatch)
+                        .subject(subject)
+                        .current_task_id(self.current_task_id)
+                        .build()
+                        .map_err(Error::Event)?;
+
+                    event!(Level::INFO, "event received: {}", e.subject);
+  
+                    let result  = self.tx.send(e);
+                    if let Err(err) = result {
+                       print!("error :: {}",err);
+                    }
+
                 }
-                // // Convert buffer to string
-                // let csv_content = String::from_utf8(buffer).map_err(Error::CSVFileReadError)?;
-                // //print!("csv_content:: {:?}",csv_content);
-                // let mut rdr = ReaderBuilder::new().from_reader(csv_content.as_bytes());
-                // let header = rdr.byte_headers();
-                // println!("header:: {:?}", header);
-                // for result in rdr.records() {
-                //     let record = result.map_err(Error::CSVLoopError)?;
-                //     println!("record:: {:?}", record);
-                // }
             }
         }
         Ok(())

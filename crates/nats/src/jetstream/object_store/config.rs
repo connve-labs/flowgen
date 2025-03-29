@@ -3,13 +3,14 @@ use serde::{Deserialize, Serialize};
 #[derive(PartialEq, Clone, Debug, Default, Deserialize, Serialize)]
 pub struct Source {
     pub credentials: String,
-    pub bucket: String,
+    pub input_bucket: String,
     pub stream: String,
     pub subject: String,
     pub durable_name: String,
     pub batch_size: Option<usize>,
     pub delay_secs: Option<u64>,
     pub has_header: Option<bool>,
+    pub path: String,
 }
 #[derive(PartialEq, Clone, Debug, Default, Deserialize, Serialize)]
 pub struct Target {
