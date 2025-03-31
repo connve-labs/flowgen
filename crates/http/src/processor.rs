@@ -17,13 +17,13 @@ use tracing::{event, Level};
 
 const DEFAULT_MESSAGE_SUBJECT: &str = "http.response";
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, PartialEq, Clone, Debug, Default)]
 struct Credentials {
     bearer_auth: Option<String>,
     basic_auth: Option<BasicAuth>,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, PartialEq, Clone, Debug, Default)]
 struct BasicAuth {
     username: String,
     password: String,
@@ -59,7 +59,10 @@ pub enum Error {
     NotFound(),
     #[error("error parsing string to json")]
     ParseJson(),
+    #[error("either payload json or payload input is required")]
+    PayloadConfig(),
 }
+
 pub struct Processor {
     config: Arc<super::config::Processor>,
     tx: Sender<Event>,
@@ -101,6 +104,10 @@ impl Processor {
                     let mut client = match config.method {
                         crate::config::HttpMethod::GET => client.get(endpoint),
                         crate::config::HttpMethod::POST => client.post(endpoint),
+                        crate::config::HttpMethod::PUT => client.put(endpoint),
+                        crate::config::HttpMethod::DELETE => client.delete(endpoint),
+                        crate::config::HttpMethod::PATCH => client.patch(endpoint),
+                        crate::config::HttpMethod::HEAD => client.head(endpoint),
                     };
 
                     // Add headers if present in the config.
@@ -117,18 +124,26 @@ impl Processor {
                     }
 
                     // Set client body to json from the provided json string.
-                    if let Some(payload_json) = &config.payload_json {
-                        let key = payload_json.key.replace("{{", "").replace("}}", "");
-                        let json_string = data.get(&key).ok_or_else(Error::NotFound)?;
-                        let json = serde_json::from_str::<serde_json::Value>(
-                            json_string.as_str().ok_or_else(Error::ParseJson)?,
-                        )
-                        .map_err(Error::SerdeJson)?;
+                    if let Some(payload) = &config.payload {
+                        let json = match &payload.object {
+                            Some(obj) => Value::Object(obj.to_owned()),
+                            None => match &payload.input {
+                                Some(input) => {
+                                    let key = input.replace("{{", "").replace("}}", "");
+                                    let json_string = data.get(&key).ok_or_else(Error::NotFound)?;
+                                    serde_json::from_str::<serde_json::Value>(
+                                        json_string.as_str().ok_or_else(Error::ParseJson)?,
+                                    )
+                                    .map_err(Error::SerdeJson)?
+                                }
+                                None => return Err(Error::PayloadConfig()),
+                            },
+                        };
 
-                        client = match payload_json.send_as {
-                            crate::config::PayloadSendAs::JSON => client.json(&json),
-                            crate::config::PayloadSendAs::URLENCODED => client.form(&json),
-                            crate::config::PayloadSendAs::QUERYPARAMS => client.query(&json),
+                        client = match payload.send_as {
+                            crate::config::PayloadSendAs::Json => client.json(&json),
+                            crate::config::PayloadSendAs::UrlEncoded => client.form(&json),
+                            crate::config::PayloadSendAs::QueryParams => client.query(&json),
                         }
                     }
 

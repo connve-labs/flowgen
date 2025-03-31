@@ -8,25 +8,25 @@ pub struct Processor {
     pub label: Option<String>,
     pub endpoint: String,
     pub method: HttpMethod,
-    pub payload: Option<Map<String, Value>>,
-    pub payload_json: Option<PayloadJson>,
+    pub payload: Option<Payload>,
     pub headers: Option<HashMap<String, String>>,
     pub credentials: Option<String>,
     pub inputs: Option<HashMap<String, Input>>,
 }
 
 #[derive(PartialEq, Clone, Debug, Default, Deserialize, Serialize)]
-pub struct PayloadJson {
-    pub key: String,
+pub struct Payload {
+    pub object: Option<Map<String, Value>>,
+    pub input: Option<String>,
     pub send_as: PayloadSendAs,
 }
 
 #[derive(PartialEq, Clone, Debug, Default, Deserialize, Serialize)]
 pub enum PayloadSendAs {
     #[default]
-    JSON,
-    URLENCODED,
-    QUERYPARAMS,
+    Json,
+    UrlEncoded,
+    QueryParams,
 }
 
 #[derive(PartialEq, Clone, Debug, Default, Deserialize, Serialize)]
@@ -34,4 +34,8 @@ pub enum HttpMethod {
     #[default]
     GET,
     POST,
+    PUT,
+    DELETE,
+    PATCH,
+    HEAD,
 }
