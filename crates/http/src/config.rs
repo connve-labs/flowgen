@@ -3,6 +3,32 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 
+/// A configuration options for the http processor.
+/// Example:
+/// ```json
+/// {
+///     "processor": {
+///         "http": {
+///             "label": "name_of_the_processor",
+///             "method": "POST",
+///             "endpoint": "https://example.com",
+///             "payload": {
+///                 "input": "{{payload}}",
+///                 "send_as": "UrlEncoded"
+///              },
+///              "credentials": "/etc/example/credentials.json",
+///              "inputs": {
+///                 "payload": {
+///                     "column": "payload",
+///                     "is_static": false,
+///                     "is_extension": false,
+///                     "index": 0
+///                   }
+///               }
+///          }
+///      }
+/// }
+
 #[derive(PartialEq, Clone, Debug, Default, Deserialize, Serialize)]
 pub struct Processor {
     pub label: Option<String>,
