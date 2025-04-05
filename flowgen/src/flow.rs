@@ -27,9 +27,9 @@ pub enum Error {
     #[error("error with NATS JetStream Subscriber")]
     NatsJetStreamSubscriber(#[source] flowgen_nats::jetstream::subscriber::Error),
     #[error("error with file subscriber")]
-    FileSubscriber(#[source] flowgen_file::reader::Error),
+    FileReader(#[source] flowgen_file::reader::Error),
     #[error("error with file publisher")]
-    FilePublisher(#[source] flowgen_file::writer::Error),
+    FileWriter(#[source] flowgen_file::writer::Error),
     #[error("error with generate subscriber")]
     GenerateSubscriber(#[source] flowgen_core::task::generate::subscriber::Error),
 }
@@ -71,18 +71,20 @@ impl Flow {
                 }
                 Task::file_reader(config) => {
                     let config = Arc::new(config.to_owned());
+                    let rx = tx.subscribe();
                     let tx = tx.clone();
                     let handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
                         flowgen_file::reader::ReaderBuilder::new()
                             .config(config)
                             .sender(tx)
+                            .receiver(rx)
                             .current_task_id(i)
                             .build()
                             .await
-                            .map_err(Error::FileSubscriber)?
+                            .map_err(Error::FileReader)?
                             .run()
                             .await
-                            .map_err(Error::FileSubscriber)?;
+                            .map_err(Error::FileReader)?;
                         Ok(())
                     });
                     handle_list.push(handle);
@@ -97,10 +99,10 @@ impl Flow {
                             .current_task_id(i)
                             .build()
                             .await
-                            .map_err(Error::FilePublisher)?
+                            .map_err(Error::FileWriter)?
                             .run()
                             .await
-                            .map_err(Error::FilePublisher)?;
+                            .map_err(Error::FileWriter)?;
                         Ok(())
                     });
                     handle_list.push(handle);
