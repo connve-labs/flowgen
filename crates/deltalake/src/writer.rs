@@ -6,16 +6,13 @@ use deltalake::{
         file::properties::WriterProperties,
     },
     writer::{DeltaWriter, RecordBatchWriter},
-    DeltaOps,
+    DeltaOps, DeltaTable,
 };
 use flowgen_core::stream::event::Event;
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::{
-    sync::{broadcast::Receiver, Mutex},
-    task::JoinHandle,
-};
+use tokio::sync::{broadcast::Receiver, Mutex};
 use tracing::{error, event, Level};
 
 const DEFAULT_MESSAGE_SUBJECT: &str = "deltalake.writer";
@@ -38,6 +35,46 @@ pub enum Error {
     EmptyStr(),
 }
 
+pub struct EventHandler {
+    table: Arc<Mutex<DeltaTable>>,
+    config: Arc<super::config::Writer>,
+}
+
+impl EventHandler {
+    async fn process(self, event: Event) -> Result<(), Error> {
+        let mut table = self.table.lock().await;
+
+        let writer_properties = WriterProperties::builder()
+            .set_compression(Compression::ZSTD(
+                ZstdLevel::try_new(3).map_err(Error::Parquet)?,
+            ))
+            .build();
+
+        let mut writer = RecordBatchWriter::for_table(&table)
+            .map_err(Error::DeltaTable)?
+            .with_writer_properties(writer_properties);
+
+        writer.write(event.data).await.map_err(Error::DeltaTable)?;
+        writer
+            .flush_and_commit(&mut table)
+            .await
+            .map_err(Error::DeltaTable)?;
+
+        let file_stem = self
+            .config
+            .path
+            .file_stem()
+            .ok_or_else(Error::EmptyFileName)?
+            .to_str()
+            .ok_or_else(Error::EmptyStr)?
+            .trim();
+
+        let timestamp = Utc::now().timestamp_micros();
+        let subject = format!("{}.{}.{}", DEFAULT_MESSAGE_SUBJECT, file_stem, timestamp);
+        event!(Level::INFO, "{}", format!("event processed: {}", subject));
+        Ok(())
+    }
+}
 #[derive(Debug)]
 pub struct Writer {
     config: Arc<super::config::Writer>,
@@ -48,99 +85,50 @@ pub struct Writer {
 impl flowgen_core::task::runner::Runner for Writer {
     type Error = Error;
     async fn run(mut self) -> Result<(), Error> {
-        let handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
-            deltalake_gcp::register_handlers(None);
-            let mut storage_options = HashMap::new();
-            storage_options.insert(
-                "google_service_account".to_string(),
-                self.config.credentials.clone(),
-            );
+        deltalake_gcp::register_handlers(None);
+        let mut storage_options = HashMap::new();
+        storage_options.insert(
+            "google_service_account".to_string(),
+            self.config.credentials.clone(),
+        );
 
-            let path = self.config.path.to_str().ok_or_else(Error::MissingPath)?;
+        let path = self.config.path.to_str().ok_or_else(Error::MissingPath)?;
 
-            let ops = DeltaOps::try_from_uri_with_storage_options(path, storage_options.clone())
-                .await
-                .map_err(Error::DeltaTable)?;
+        let ops = DeltaOps::try_from_uri_with_storage_options(path, storage_options.clone())
+            .await
+            .map_err(Error::DeltaTable)?;
 
-            let mut columns = Vec::new();
-            for c in &self.config.columns {
-                let data_type = match c.data_type {
-                    crate::config::DataType::Utf8 => DataType::Primitive(PrimitiveType::String),
-                };
-                let struct_field = StructField::new(c.name.to_string(), data_type, c.nullable);
-                columns.push(struct_field);
+        let mut columns = Vec::new();
+        for c in &self.config.columns {
+            let data_type = match c.data_type {
+                crate::config::DataType::Utf8 => DataType::Primitive(PrimitiveType::String),
+            };
+            let struct_field = StructField::new(c.name.to_string(), data_type, c.nullable);
+            columns.push(struct_field);
+        }
+
+        let table = ops
+            .create()
+            .with_columns(columns)
+            .await
+            .map_err(Error::DeltaTable)?;
+        let table = Arc::new(Mutex::new(table));
+
+        while let Ok(event) = self.rx.recv().await {
+            if event.current_task_id == Some(self.current_task_id - 1) {
+                // Setup thread-safe reference to variables and pass to EventHandler.
+                let table = Arc::clone(&table);
+                let config = Arc::clone(&self.config);
+                let event_handler = EventHandler { table, config };
+
+                tokio::spawn(async move {
+                    // Process the events and in case of error raise event.
+                    if let Err(err) = event_handler.process(event).await {
+                        event!(Level::ERROR, "{}", err);
+                    }
+                });
             }
-
-            let table = ops
-                .create()
-                .with_columns(columns)
-                .await
-                .map_err(Error::DeltaTable)?;
-            let table = Arc::new(Mutex::new(table));
-
-            while let Ok(event) = self.rx.recv().await {
-                if event.current_task_id == Some(self.current_task_id - 1) {
-                    let table = Arc::clone(&table);
-                    let config = Arc::clone(&self.config);
-                    let handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
-                        let table = Arc::clone(&table);
-                        let mut table = table.lock().await;
-
-                        let writer_properties = WriterProperties::builder()
-                            .set_compression(Compression::ZSTD(
-                                ZstdLevel::try_new(3).map_err(Error::Parquet)?,
-                            ))
-                            .build();
-
-                        let mut writer = RecordBatchWriter::for_table(&table)
-                            .map_err(Error::DeltaTable)?
-                            .with_writer_properties(writer_properties);
-
-                        writer.write(event.data).await.map_err(Error::DeltaTable)?;
-                        writer
-                            .flush_and_commit(&mut table)
-                            .await
-                            .map_err(Error::DeltaTable)?;
-
-                        let file_stem = config
-                            .path
-                            .file_stem()
-                            .ok_or_else(Error::EmptyFileName)?
-                            .to_str()
-                            .ok_or_else(Error::EmptyStr)?
-                            .trim();
-
-                        let timestamp = Utc::now().timestamp_micros();
-                        let subject =
-                            format!("{}.{}.{}", DEFAULT_MESSAGE_SUBJECT, file_stem, timestamp);
-                        event!(Level::INFO, "{}", format!("event processed: {}", subject));
-                        Ok(())
-                    });
-                    match handle.await {
-                        Ok(result) => {
-                            if let Err(e) = result {
-                                event!(Level::ERROR, "{}", e);
-                            }
-                        }
-                        Err(e) => {
-                            event!(Level::ERROR, "{}", e);
-                        }
-                    };
-                }
-            }
-            Ok(())
-        });
-        match handle.await {
-            Ok(result) => {
-                if let Err(e) = result {
-                    event!(Level::ERROR, "{}", e);
-                }
-            }
-            Err(e) => {
-                event!(Level::ERROR, "{}", e);
-            }
-        };
-
+        }
         Ok(())
     }
 }

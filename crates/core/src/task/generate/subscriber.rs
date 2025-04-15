@@ -4,7 +4,7 @@ use crate::{
 };
 use chrono::Utc;
 use std::{sync::Arc, time::Duration};
-use tokio::{sync::broadcast::Sender, time};
+use tokio::{sync::broadcast::Sender, task::JoinHandle, time};
 use tracing::{event, Level};
 
 const DEFAULT_MESSAGE_SUBJECT: &str = "generate";
@@ -29,39 +29,42 @@ pub struct Subscriber {
 impl crate::task::runner::Runner for Subscriber {
     type Error = Error;
     async fn run(self) -> Result<(), Error> {
-        let mut counter = 0;
-        loop {
-            time::sleep(Duration::from_secs(self.config.interval)).await;
-            counter += 1;
+        let handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
+            let mut counter = 0;
+            loop {
+                time::sleep(Duration::from_secs(self.config.interval)).await;
+                counter += 1;
 
-            let timestamp = Utc::now().timestamp_micros();
-            let subject = match &self.config.label {
-                Some(label) => format!(
-                    "{}.{}.{}",
-                    DEFAULT_MESSAGE_SUBJECT,
-                    label.to_lowercase(),
-                    timestamp
-                ),
-                None => format!("{}.{}", DEFAULT_MESSAGE_SUBJECT, timestamp),
-            };
+                let timestamp = Utc::now().timestamp_micros();
+                let subject = match &self.config.label {
+                    Some(label) => format!(
+                        "{}.{}.{}",
+                        DEFAULT_MESSAGE_SUBJECT,
+                        label.to_lowercase(),
+                        timestamp
+                    ),
+                    None => format!("{}.{}", DEFAULT_MESSAGE_SUBJECT, timestamp),
+                };
 
-            let recordbatch = self.config.message.to_recordbatch().unwrap();
+                let recordbatch = self.config.message.to_recordbatch().unwrap();
 
-            let e = EventBuilder::new()
-                .data(recordbatch)
-                .subject(subject)
-                .current_task_id(self.current_task_id)
-                .build()
-                .map_err(Error::Event)?;
+                let e = EventBuilder::new()
+                    .data(recordbatch)
+                    .subject(subject)
+                    .current_task_id(self.current_task_id)
+                    .build()
+                    .map_err(Error::Event)?;
 
-            event!(Level::INFO, "event processed: {}", e.subject);
-            self.tx.send(e).map_err(Error::SendMessage)?;
+                event!(Level::INFO, "event processed: {}", e.subject);
+                self.tx.send(e).map_err(Error::SendMessage)?;
 
-            match self.config.count {
-                Some(count) if count == counter => break,
-                Some(_) | None => continue,
+                match self.config.count {
+                    Some(count) if count == counter => break,
+                    Some(_) | None => continue,
+                }
             }
-        }
+            Ok(())
+        });
 
         Ok(())
     }

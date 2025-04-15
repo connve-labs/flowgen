@@ -1,5 +1,6 @@
 use super::config;
 use crate::config::Task;
+use arrow::compute::kernels::take;
 use flowgen_core::{stream::event::Event, task::runner::Runner};
 use std::{path::PathBuf, sync::Arc};
 use tokio::{
@@ -46,13 +47,13 @@ pub enum Error {
 #[derive(Debug)]
 pub struct Flow {
     config: config::Config,
-    pub handle_list: Option<Vec<JoinHandle<Result<(), Error>>>>,
+    pub task_list: Option<Vec<JoinHandle<Result<(), Error>>>>,
 }
 
 impl Flow {
     pub async fn run(mut self) -> Result<Self, Error> {
         let config = &self.config;
-        let mut handle_list: Vec<JoinHandle<Result<(), Error>>> = Vec::new();
+        let mut task_list: Vec<JoinHandle<Result<(), Error>>> = Vec::new();
         let (tx, _): (Sender<Event>, Receiver<Event>) = tokio::sync::broadcast::channel(1000);
 
         for (i, task) in config.flow.tasks.iter().enumerate() {
@@ -60,22 +61,27 @@ impl Flow {
                 Task::deltalake_writer(config) => {
                     let config = Arc::new(config.to_owned());
                     let rx = tx.subscribe();
-                    flowgen_deltalake::writer::WriterBuilder::new()
-                        .config(config)
-                        .receiver(rx)
-                        .current_task_id(i)
-                        .build()
-                        .await
-                        .map_err(Error::DeltalakeWriter)?
-                        .run()
-                        .await
-                        .map_err(Error::DeltalakeWriter)?;
+                    let task: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
+                        flowgen_deltalake::writer::WriterBuilder::new()
+                            .config(config)
+                            .receiver(rx)
+                            .current_task_id(i)
+                            .build()
+                            .await
+                            .map_err(Error::DeltalakeWriter)?
+                            .run()
+                            .await
+                            .map_err(Error::DeltalakeWriter)?;
+                        Ok(())
+                    });
+                    task_list.push(task);
                 }
+
                 Task::enumerate(config) => {
                     let config = Arc::new(config.to_owned());
                     let rx = tx.subscribe();
                     let tx = tx.clone();
-                    let handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
+                    let task: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
                         flowgen_core::task::enumerate::processor::ProcessorBuilder::new()
                             .config(config)
                             .receiver(rx)
@@ -90,13 +96,13 @@ impl Flow {
 
                         Ok(())
                     });
-                    handle_list.push(handle);
+                    task_list.push(task);
                 }
                 Task::file_reader(config) => {
                     let config = Arc::new(config.to_owned());
                     let rx = tx.subscribe();
                     let tx = tx.clone();
-                    let handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
+                    let task: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
                         flowgen_file::reader::ReaderBuilder::new()
                             .config(config)
                             .sender(tx)
@@ -110,12 +116,12 @@ impl Flow {
                             .map_err(Error::FileReader)?;
                         Ok(())
                     });
-                    handle_list.push(handle);
+                    task_list.push(task);
                 }
                 Task::file_writer(config) => {
                     let config = Arc::new(config.to_owned());
                     let rx = tx.subscribe();
-                    let handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
+                    let task: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
                         flowgen_file::writer::WriterBuilder::new()
                             .config(config)
                             .receiver(rx)
@@ -128,12 +134,12 @@ impl Flow {
                             .map_err(Error::FileWriter)?;
                         Ok(())
                     });
-                    handle_list.push(handle);
+                    task_list.push(task);
                 }
                 Task::generate(config) => {
                     let config = Arc::new(config.to_owned());
                     let tx = tx.clone();
-                    let handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
+                    let task: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
                         flowgen_core::task::generate::subscriber::SubscriberBuilder::new()
                             .config(config)
                             .sender(tx)
@@ -146,13 +152,13 @@ impl Flow {
                             .map_err(Error::GenerateSubscriber)?;
                         Ok(())
                     });
-                    handle_list.push(handle);
+                    task_list.push(task);
                 }
                 Task::http(config) => {
                     let config = Arc::new(config.to_owned());
                     let rx = tx.subscribe();
                     let tx = tx.clone();
-                    let handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
+                    let task: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
                         flowgen_http::processor::ProcessorBuilder::new()
                             .config(config)
                             .receiver(rx)
@@ -167,12 +173,12 @@ impl Flow {
 
                         Ok(())
                     });
-                    handle_list.push(handle);
+                    task_list.push(task);
                 }
                 Task::nats_jetstream_subscriber(config) => {
                     let config = Arc::new(config.to_owned());
                     let tx = tx.clone();
-                    let handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
+                    let task: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
                         flowgen_nats::jetstream::subscriber::SubscriberBuilder::new()
                             .config(config)
                             .sender(tx)
@@ -185,12 +191,12 @@ impl Flow {
                             .map_err(Error::NatsJetStreamSubscriber)?;
                         Ok(())
                     });
-                    handle_list.push(handle);
+                    task_list.push(task);
                 }
                 Task::nats_jetstream_publisher(config) => {
                     let config = Arc::new(config.to_owned());
                     let rx = tx.subscribe();
-                    let handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
+                    let task: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
                         flowgen_nats::jetstream::publisher::PublisherBuilder::new()
                             .config(config)
                             .receiver(rx)
@@ -203,12 +209,12 @@ impl Flow {
                             .map_err(Error::NatsJetStreamPublisher)?;
                         Ok(())
                     });
-                    handle_list.push(handle);
+                    task_list.push(task);
                 }
                 Task::object_store_subscriber(config) => {
                     let config = Arc::new(config.to_owned());
                     let tx = tx.clone();
-                    let handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
+                    let task: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
                         flowgen_nats::jetstream::object_store::reader::ReaderBuilder::new()
                             .config(config)
                             .sender(tx)
@@ -221,12 +227,12 @@ impl Flow {
                             .map_err(Error::NatsJetStreamObjectStoreSubscriber)?;
                         Ok(())
                     });
-                    handle_list.push(handle);
+                    task_list.push(task);
                 }
                 Task::salesforce_pubsub_subscriber(config) => {
                     let config = Arc::new(config.to_owned());
                     let tx = tx.clone();
-                    let handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
+                    let task: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
                         flowgen_salesforce::pubsub::subscriber::SubscriberBuilder::new()
                             .config(config)
                             .sender(tx)
@@ -239,12 +245,12 @@ impl Flow {
                             .map_err(Error::SalesforcePubSubSubscriber)?;
                         Ok(())
                     });
-                    handle_list.push(handle);
+                    task_list.push(task);
                 }
                 Task::salesforce_pubsub_publisher(config) => {
                     let config = Arc::new(config.to_owned());
                     let rx = tx.subscribe();
-                    let handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
+                    let task: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
                         flowgen_salesforce::pubsub::publisher::PublisherBuilder::new()
                             .config(config)
                             .receiver(rx)
@@ -257,13 +263,13 @@ impl Flow {
                             .map_err(Error::SalesforcePubsubPublisher)?;
                         Ok(())
                     });
-                    handle_list.push(handle);
+                    task_list.push(task);
                 }
                 Task::render(config) => {
                     let config = Arc::new(config.to_owned());
                     let rx = tx.subscribe();
                     let tx = tx.clone();
-                    let handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
+                    let task: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
                         flowgen_core::task::render::processor::ProcessorBuilder::new()
                             .config(config)
                             .receiver(rx)
@@ -278,11 +284,11 @@ impl Flow {
 
                         Ok(())
                     });
-                    handle_list.push(handle);
+                    task_list.push(task);
                 }
             }
         }
-        self.handle_list = Some(handle_list);
+        self.task_list = Some(task_list);
         Ok(self)
     }
 }
@@ -302,7 +308,7 @@ impl Builder {
         let config: config::Config = serde_json::from_str(&c).map_err(Error::ParseConfig)?;
         let f = Flow {
             config,
-            handle_list: None,
+            task_list: None,
         };
         Ok(f)
     }

@@ -45,7 +45,7 @@ async fn main() {
                 process::exit(1);
             });
 
-        if let Some(tasks) = f.handle_list {
+        if let Some(tasks) = f.task_list {
             futures_util::future::join_all(tasks).await;
         }
     }
