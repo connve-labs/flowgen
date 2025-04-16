@@ -1,15 +1,12 @@
 use chrono::Utc;
 use deltalake::{
-    kernel::{DataType, PrimitiveType, StructField},
     parquet::{
         basic::{Compression, ZstdLevel},
         file::properties::WriterProperties,
     },
     writer::{DeltaWriter, RecordBatchWriter},
-    DeltaOps, DeltaTable,
 };
-use flowgen_core::stream::event::Event;
-use std::collections::HashMap;
+use flowgen_core::{connect::client::Client, stream::event::Event};
 use std::sync::Arc;
 use tokio::sync::{broadcast::Receiver, Mutex};
 use tracing::{error, event, Level};
@@ -24,12 +21,14 @@ pub enum Error {
     DeltaTable(#[from] deltalake::DeltaTableError),
     #[error(transparent)]
     TaskJoin(#[from] tokio::task::JoinError),
+    #[error(transparent)]
+    Client(#[from] super::client::Error),
     #[error("missing required event attrubute")]
     MissingRequiredAttribute(String),
     #[error("missing required config value path")]
     MissingPath(),
-    #[error("missing required config value path")]
-    Missing(),
+    #[error("missing required value DeltaTable")]
+    MissingDeltaTable(),
     #[error("no filename in provided path")]
     EmptyFileName(),
     #[error("no value in provided str")]
@@ -38,13 +37,14 @@ pub enum Error {
 
 #[derive(Debug)]
 pub struct EventHandler {
-    table: Arc<Mutex<DeltaTable>>,
+    client: Arc<Mutex<super::client::Client>>,
     config: Arc<super::config::Writer>,
 }
 
 impl EventHandler {
     async fn process(self, event: Event) -> Result<(), Error> {
-        let mut table = self.table.lock().await;
+        let mut client = self.client.lock().await;
+        let table = client.table.as_mut().ok_or_else(Error::MissingDeltaTable)?;
 
         let writer_properties = WriterProperties::builder()
             .set_compression(Compression::ZSTD(
@@ -52,13 +52,13 @@ impl EventHandler {
             ))
             .build();
 
-        let mut writer = RecordBatchWriter::for_table(&table)
+        let mut writer = RecordBatchWriter::for_table(table)
             .map_err(Error::DeltaTable)?
             .with_writer_properties(writer_properties);
 
         writer.write(event.data).await.map_err(Error::DeltaTable)?;
         writer
-            .flush_and_commit(&mut table)
+            .flush_and_commit(table)
             .await
             .map_err(Error::DeltaTable)?;
 
@@ -88,21 +88,34 @@ pub struct Writer {
 impl flowgen_core::task::runner::Runner for Writer {
     type Error = Error;
     async fn run(mut self) -> Result<(), Error> {
-        let client = super::client::ClientBuilder::new()
+        // Build a DeltaTable client with credentials and storage path.
+        // Return thread-safe reference to use in the downstream components.
+        let client = match super::client::ClientBuilder::new()
             .credentials(self.config.credentials.clone())
             .path(self.config.path.clone())
             .columns(self.config.columns.clone())
             .build()
-            .await
-            .unwrap();
-        let table = client.table.unwrap();
+        {
+            Ok(client) => match client.connect().await {
+                Ok(client) => Arc::new(Mutex::new(client)),
+                Err(err) => {
+                    event!(Level::ERROR, "{}", err);
+                    return Err(Error::Client(err));
+                }
+            },
+            Err(err) => {
+                event!(Level::ERROR, "{}", err);
+                return Err(Error::Client(err));
+            }
+        };
 
+        // Receive events, validate if the event should be processed.
         while let Ok(event) = self.rx.recv().await {
             if event.current_task_id == Some(self.current_task_id - 1) {
                 // Setup thread-safe reference to variables and pass to EventHandler.
-                let table = Arc::clone(&table);
+                let client = Arc::clone(&client);
                 let config = Arc::clone(&self.config);
-                let event_handler = EventHandler { table, config };
+                let event_handler = EventHandler { client, config };
 
                 tokio::spawn(async move {
                     // Process the events and in case of error log it.

@@ -2,10 +2,7 @@ use deltalake::{
     kernel::{DataType, PrimitiveType, StructField},
     DeltaOps, DeltaTable,
 };
-
-use std::sync::Arc;
 use std::{collections::HashMap, path::PathBuf};
-use tokio::sync::Mutex;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -30,7 +27,7 @@ pub struct Client {
     credentials: String,
     path: PathBuf,
     columns: Option<Vec<super::config::Column>>,
-    pub(crate) table: Option<Arc<Mutex<DeltaTable>>>,
+    pub(crate) table: Option<DeltaTable>,
 }
 
 impl flowgen_core::connect::client::Client for Client {
@@ -65,7 +62,6 @@ impl flowgen_core::connect::client::Client for Client {
                 .with_columns(columns)
                 .await
                 .map_err(Error::DeltaTable)?;
-            let table = Arc::new(Mutex::new(table));
 
             self.table = Some(table)
         }
@@ -102,7 +98,7 @@ impl ClientBuilder {
         self
     }
 
-    pub async fn build(self) -> Result<Client, Error> {
+    pub fn build(self) -> Result<Client, Error> {
         Ok(Client {
             credentials: self
                 .credentials
