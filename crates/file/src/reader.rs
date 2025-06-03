@@ -1,4 +1,5 @@
 use arrow::{array::RecordBatch, csv::reader::Format, ipc::writer::StreamWriter};
+use bytes::Bytes;
 use chrono::Utc;
 use flowgen_core::{
     cache::Cache,
@@ -75,9 +76,13 @@ impl<T: Cache> flowgen_core::task::runner::Runner for Reader<T> {
                         .map_err(Error::Arrow)?;
                     file.rewind().map_err(Error::IO)?;
 
-                    if config.cache_schema.is_some_and(|x| x) {
-                        // cache.get();
-                    }
+                    if let Some(cache_options) = &config.cache_options {
+                        if let Some(insert_key) = &cache_options.insert_key {
+                            let schema_string = serde_json::to_string(&schema).unwrap();
+                            let schema_bytes = Bytes::from(schema_string);
+                            cache.put(insert_key.as_str(), schema_bytes).await.unwrap();
+                        }
+                    };
 
                     let batch_size = match config.batch_size {
                         Some(batch_size) => batch_size,

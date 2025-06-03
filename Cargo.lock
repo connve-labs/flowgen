@@ -1877,6 +1877,7 @@ name = "flowgen_file"
 version = "0.0.1"
 dependencies = [
  "arrow",
+ "bytes",
  "chrono",
  "flowgen_core",
  "futures",

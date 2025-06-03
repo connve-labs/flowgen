@@ -1,3 +1,4 @@
+use flowgen_core::cache::CacheOptions;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -175,4 +176,6 @@ pub struct CreateOptions {
     /// of the target to be created. This is required for creation if `create_if_not_exist` is `true`.
     /// If `create_if_not_exist` is `true` but `columns` is `None` or empty, creation might fail or be skipped.
     pub columns: Option<Vec<Column>>,
+    /// Cache options i.e. whether the schema should be retrieved and a new schema added to cache.
+    pub cache_options: Option<CacheOptions>,
 }

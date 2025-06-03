@@ -1,12 +1,15 @@
 use super::config;
 use crate::config::Task;
-use flowgen_core::{stream::event::Event, task::runner::Runner};
+use flowgen_core::{cache::Cache, stream::event::Event, task::runner::Runner};
 use std::{path::PathBuf, sync::Arc};
 use tokio::{
     sync::broadcast::{Receiver, Sender},
     task::JoinHandle,
 };
 use tracing::error;
+
+/// Default alias for the source data (in-memory table) in MERGE operations.
+const DEFAULT_CACHE_NAME: &str = "flowgen_cache";
 
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
@@ -56,9 +59,13 @@ impl Flow {
         let (tx, _): (Sender<Event>, Receiver<Event>) = tokio::sync::broadcast::channel(1000);
 
         let cache = flowgen_nats::cache::CacheBuilder::new()
-            .credentials("".to_string().into())
+            .credentials_path("".to_string().into())
             .build()
+            .unwrap()
+            .init(DEFAULT_CACHE_NAME)
+            .await
             .unwrap();
+
         let cache = Arc::new(cache);
 
         for (i, task) in config.flow.tasks.iter().enumerate() {
@@ -66,11 +73,13 @@ impl Flow {
                 Task::deltalake_writer(config) => {
                     let config = Arc::new(config.to_owned());
                     let rx = tx.subscribe();
+                    let cache = Arc::clone(&cache);
                     let task: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
                         flowgen_deltalake::writer::WriterBuilder::new()
                             .config(config)
                             .receiver(rx)
                             .current_task_id(i)
+                            .cache(cache)
                             .build()
                             .map_err(Error::DeltalakeWriter)?
                             .run()

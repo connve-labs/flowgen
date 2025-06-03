@@ -26,7 +26,12 @@
 
 use chrono::Utc;
 use deltalake::{
+    arrow::{
+        array::{Array, RecordBatch, TimestampMicrosecondArray, TimestampMillisecondArray},
+        datatypes::{DataType, Field, Schema, TimeUnit},
+    },
     datafusion::{datasource::MemTable, prelude::SessionContext},
+    kernel::{StructField, StructType},
     parquet::{
         basic::{Compression, ZstdLevel},
         file::properties::WriterProperties,
@@ -34,7 +39,9 @@ use deltalake::{
     writer::{DeltaWriter, RecordBatchWriter},
     DeltaOps,
 };
-use flowgen_core::{connect::client::Client as FlowgenClientTrait, stream::event::Event};
+use flowgen_core::{
+    cache::Cache, connect::client::Client as FlowgenClientTrait, stream::event::Event,
+};
 use std::sync::Arc;
 use tokio::sync::{broadcast::Receiver, Mutex};
 use tracing::{error, event, Level};
@@ -82,6 +89,55 @@ pub enum Error {
     EmptyStr(),
 }
 
+fn adjust_event_data_precision(event: &mut Event) -> Result<(), Error> {
+    let columns = event.data.columns();
+    let schema = event.data.schema();
+
+    let mut new_fields: Vec<Arc<Field>> = Vec::new();
+    let mut new_columns = Vec::new();
+
+    for (i, field) in schema.fields().iter().enumerate() {
+        match field.data_type() {
+            DataType::Timestamp(TimeUnit::Millisecond, tz) => {
+                // Update field to microsecond precision
+                let new_field = Arc::new(Field::new(
+                    field.name(),
+                    DataType::Timestamp(TimeUnit::Microsecond, tz.clone()),
+                    field.is_nullable(),
+                ));
+                new_fields.push(new_field);
+
+                // Convert column data
+                let old_array = &columns[i];
+                let millis_array = old_array
+                    .as_any()
+                    .downcast_ref::<TimestampMillisecondArray>()
+                    .unwrap();
+
+                let micros_data: Vec<Option<i64>> = millis_array
+                    .iter()
+                    .map(|val| val.map(|ms| ms * 1000))
+                    .collect();
+
+                let new_array = TimestampMicrosecondArray::from(micros_data);
+                new_columns.push(Arc::new(new_array) as Arc<dyn Array>);
+            }
+            _ => {
+                new_fields.push(field.clone());
+                new_columns.push(columns[i].clone());
+            }
+        }
+    }
+
+    let new_schema = Arc::new(Schema::new(new_fields));
+    let new_batch = RecordBatch::try_new(new_schema, new_columns).unwrap();
+
+    // Update your event data
+    event.data = new_batch;
+
+    Ok(())
+}
+
 /// Handles the processing logic for a single incoming `Event`.
 ///
 /// An `EventHandler` instance is created for each event that needs to be written.
@@ -107,7 +163,7 @@ impl EventHandler {
     /// # Returns
     /// * `Ok(())` if the event was processed and written successfully.
     /// * `Err(Error)` if any error occurred during processing or writing.
-    async fn process(self, event: Event) -> Result<(), Error> {
+    async fn process(self, mut event: Event) -> Result<(), Error> {
         // Lock the client and setup necessary components i.e. table, operations context,
         // writer properties etc.
         let mut client = self.client.lock().await;
@@ -126,6 +182,7 @@ impl EventHandler {
                     .map_err(Error::DeltaTable)?
                     .with_writer_properties(writer_properties);
 
+                adjust_event_data_precision(&mut event).unwrap();
                 writer.write(event.data).await.map_err(Error::DeltaTable)?;
                 writer
                     .flush_and_commit(table)
@@ -184,16 +241,17 @@ impl EventHandler {
 /// broadcast channel receiver (`rx`). For each valid event, it spawns an
 /// `EventHandler` task to perform the actual write operation.
 #[derive(Debug)]
-pub struct Writer {
+pub struct Writer<T: Cache> {
     /// Shared configuration for the writer task.
     config: Arc<super::config::Writer>,
     /// Receiver end of the broadcast channel for incoming events.
     rx: Receiver<Event>,
     /// The ID assigned to this writer task, used for filtering events.
     current_task_id: usize,
+    cache: Arc<T>,
 }
 
-impl flowgen_core::task::runner::Runner for Writer {
+impl<T: Cache> flowgen_core::task::runner::Runner for Writer<T> {
     type Error = Error;
 
     /// Executes the main loop of the writer task.
@@ -212,10 +270,45 @@ impl flowgen_core::task::runner::Runner for Writer {
     async fn run(mut self) -> Result<(), Error> {
         // Build a DeltaTable client with credentials and storage path.
         // Return thread-safe reference to use in the downstream components.
+
+        let mut columns: Vec<StructField> = Vec::new();
+        if let Some(cache_options) = &self.config.create_options.cache_options {
+            if let Some(key) = &cache_options.retrieve_key {
+                let schema_bytes = self.cache.get(key).await.unwrap();
+                let schema_str = String::from_utf8(schema_bytes.to_vec()).unwrap();
+                let schema: Schema = serde_json::from_str(&schema_str).unwrap();
+
+                let adjusted_fields: Vec<Field> = schema
+                    .fields()
+                    .iter()
+                    .map(|field| {
+                        let new_data_type = match field.data_type() {
+                            DataType::Timestamp(TimeUnit::Millisecond, tz) => {
+                                DataType::Timestamp(TimeUnit::Microsecond, tz.clone())
+                            }
+                            other => other.clone(),
+                        };
+                        Field::new(field.name(), new_data_type, field.is_nullable())
+                            .with_metadata(field.metadata().clone())
+                    })
+                    .collect();
+
+                let new_schema =
+                    Schema::new(adjusted_fields).with_metadata(schema.metadata().clone());
+
+                let delta_schema = StructType::try_from(&new_schema).unwrap();
+
+                let struct_fields: Vec<StructField> = delta_schema.fields().cloned().collect();
+                columns = struct_fields;
+                println!("{:?}", columns);
+            }
+        };
+
         let client = match super::client::ClientBuilder::new()
             .credentials(self.config.credentials.clone())
             .path(self.config.path.clone())
-            .create_options(self.config.create_options.clone())
+            .columns(columns)
+            .create_if_not_exist()
             .build()
         {
             Ok(client) => match client.connect().await {
@@ -261,15 +354,19 @@ impl flowgen_core::task::runner::Runner for Writer {
 /// Provides an API for setting the required configuration and
 /// channel receiver before constructing the `Writer`.
 #[derive(Default)]
-pub struct WriterBuilder {
+pub struct WriterBuilder<T: Cache> {
     config: Option<Arc<super::config::Writer>>,
     rx: Option<Receiver<Event>>,
     current_task_id: usize,
+    cache: Option<Arc<T>>,
 }
 
-impl WriterBuilder {
+impl<T: Cache> WriterBuilder<T>
+where
+    T: Default,
+{
     /// Creates a new `WriterBuilder` with default values.
-    pub fn new() -> WriterBuilder {
+    pub fn new() -> WriterBuilder<T> {
         WriterBuilder {
             ..Default::default()
         }
@@ -293,6 +390,11 @@ impl WriterBuilder {
         self
     }
 
+    pub fn cache(mut self, cache: Arc<T>) -> Self {
+        self.cache = Some(cache);
+        self
+    }
+
     /// Sets the ID for this writer task.
     ///
     /// This ID is used to filter incoming events in the `Writer::run` method,
@@ -313,7 +415,7 @@ impl WriterBuilder {
     /// # Returns
     /// * `Ok(Writer)` if construction is successful.
     /// * `Err(Error::MissingRequiredAttribute)` if `config` or `rx` was not provided.
-    pub fn build(self) -> Result<Writer, Error> {
+    pub fn build(self) -> Result<Writer<T>, Error> {
         Ok(Writer {
             config: self
                 .config
@@ -321,6 +423,9 @@ impl WriterBuilder {
             rx: self
                 .rx
                 .ok_or_else(|| Error::MissingRequiredAttribute("receiver".to_string()))?,
+            cache: self
+                .cache
+                .ok_or_else(|| Error::MissingRequiredAttribute("cache".to_string()))?,
             current_task_id: self.current_task_id,
         })
     }

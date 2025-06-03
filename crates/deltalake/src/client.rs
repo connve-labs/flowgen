@@ -14,10 +14,8 @@
 //! if they don't exist, provided that `create_options` are supplied with the
 //! `create_if_not_exist` flag enabled and a valid schema (`columns`).
 
-use deltalake::{
-    kernel::{DataType, PrimitiveType, StructField},
-    DeltaOps, DeltaTable,
-};
+use deltalake::{kernel::StructField, DeltaOps, DeltaTable};
+
 use std::{collections::HashMap, path::PathBuf};
 
 // NOTE: Assuming `flowgen_core::connect::client::Client` trait and `super::config::CreateOptions` struct are defined elsewhere.
@@ -59,9 +57,14 @@ pub struct Client {
     credentials: String,
     /// The storage path (URI) to the Delta Lake table.
     path: PathBuf,
-    /// Optional parameters used only when creating the table if it doesn't exist.
-    /// Contains flags like `create_if_not_exist` and the schema (`columns`).
-    create_options: Option<super::config::CreateOptions>,
+    /// Schema definition for creating new Delta tables.
+    /// Specifies the column names, data types, and constraints when initializing
+    /// a new table. Only used when `create_if_not_exist` is true.
+    columns: Option<Vec<StructField>>,
+    /// Flag to automatically create the Delta table if it doesn't exist.
+    /// When true, uses the `columns` schema to initialize a new table.
+    /// When false, expects an existing table at the specified path.
+    create_if_not_exist: bool,
     /// Holds the active `DeltaTable` instance after a successful `connect` call.
     /// Marked `pub(crate)` allowing access only within the same crate.
     pub(crate) table: Option<DeltaTable>,
@@ -115,71 +118,21 @@ impl flowgen_core::connect::client::Client for Client {
             }
             Err(_) => {
                 // Table likely doesn't exist or other error occurred.
-                // Check if creation is requested and possible based on create_options.
-                if let Some(ref create_options) = self.create_options {
-                    // Only proceed if the flag explicitly allows creation.
-                    if create_options.create_if_not_exist {
-                        // Only proceed if a schema is actually provided within the options.
-                        if let Some(ref config_columns) = create_options.columns {
-                            let mut columns = Vec::new();
+                // Check if creation is requested.
+                // Attempt to create the table.
+                if self.create_if_not_exist {
+                    if let Some(ref columns) = self.columns {
+                        let table = ops
+                            .create()
+                            .with_columns(columns.clone())
+                            .await
+                            .map_err(Error::DeltaTable)?;
 
-                            // Convert config schema to Delta Lake schema.
-                            for c in config_columns {
-                                let data_type = match c.data_type {
-                                    crate::config::DataType::String => {
-                                        DataType::Primitive(PrimitiveType::String)
-                                    }
-                                    crate::config::DataType::Boolean => {
-                                        DataType::Primitive(PrimitiveType::Boolean)
-                                    }
-                                    crate::config::DataType::Float => {
-                                        DataType::Primitive(PrimitiveType::Float)
-                                    }
-                                    crate::config::DataType::Double => {
-                                        DataType::Primitive(PrimitiveType::Double)
-                                    }
-                                    crate::config::DataType::Timestamp => {
-                                        DataType::Primitive(PrimitiveType::Timestamp)
-                                    }
-                                    crate::config::DataType::TimestampNtz => {
-                                        DataType::Primitive(PrimitiveType::TimestampNtz)
-                                    }
-                                    crate::config::DataType::Date => {
-                                        DataType::Primitive(PrimitiveType::Date)
-                                    }
-                                    crate::config::DataType::Integer => {
-                                        DataType::Primitive(PrimitiveType::Integer)
-                                    }
-                                    crate::config::DataType::Long => {
-                                        DataType::Primitive(PrimitiveType::Long)
-                                    }
-                                    crate::config::DataType::Short => {
-                                        DataType::Primitive(PrimitiveType::Short)
-                                    }
-                                    crate::config::DataType::Byte => {
-                                        DataType::Primitive(PrimitiveType::Byte)
-                                    }
-                                    crate::config::DataType::Binary => {
-                                        DataType::Primitive(PrimitiveType::Binary)
-                                    }
-                                };
-                                let struct_field =
-                                    StructField::new(c.name.to_string(), data_type, c.nullable);
-                                columns.push(struct_field);
-                            }
-                            // Attempt to create the table.
-                            let table = ops
-                                .create()
-                                .with_columns(columns)
-                                .await
-                                .map_err(Error::DeltaTable)?;
-
-                            self.table = Some(table);
-                        }
+                        self.table = Some(table);
                     }
                 }
             }
-        };
+        }
         Ok(self)
     }
 }
@@ -190,12 +143,18 @@ impl flowgen_core::connect::client::Client for Client {
 /// before constructing the `Client`.
 #[derive(Default)]
 pub struct ClientBuilder {
-    /// Storage for credentials during building.
+    /// Credentials required for accessing the Delta table storage (e.g., GCP service account key).
     credentials: Option<String>,
-    /// Storage for the Delta table path during building.
+    /// The storage path (URI) to the Delta Lake table.
     path: Option<PathBuf>,
-    /// Storage for optional table creation parameters during building.
-    create_options: Option<super::config::CreateOptions>,
+    /// Schema definition for creating new Delta tables.
+    /// Specifies the column names, data types, and constraints when initializing
+    /// a new table. Only used when `create_if_not_exist` is true.
+    columns: Option<Vec<StructField>>,
+    /// Flag to automatically create the Delta table if it doesn't exist.
+    /// When true, uses the `columns` schema to initialize a new table.
+    /// When false, expects an existing table at the specified path.
+    create_if_not_exist: bool,
 }
 
 impl ClientBuilder {
@@ -224,17 +183,24 @@ impl ClientBuilder {
         self
     }
 
-    /// Sets the optional table creation options for the `Client`.
+    /// Sets the schema definition for Delta table creation.
     ///
-    /// These options (like `create_if_not_exist` flag and the table schema `columns`)
-    /// are used by the `connect` method only if the Delta table needs to be created
-    /// because it doesn't already exist at the specified path.
+    /// Specifies the column structure used to create a new Delta table if one doesn't
+    /// exist at the specified path. Only applied when `create_if_not_exist` is true.
     ///
     /// # Arguments
-    /// * `create_options` - A [`super::config::CreateOptions`] struct containing parameters
-    ///   needed for potential table creation.
-    pub fn create_options(mut self, create_options: super::config::CreateOptions) -> Self {
-        self.create_options = Some(create_options);
+    /// * `columns` - A vector of [`StructField`] definitions that define the table schema.
+    pub fn columns(mut self, columns: Vec<StructField>) -> Self {
+        self.columns = Some(columns);
+        self
+    }
+
+    /// Enables automatic table creation if the Delta table doesn't exist.
+    ///
+    /// When enabled, a new Delta table will be created at the specified path
+    /// if one is not found during connection.
+    pub fn create_if_not_exist(mut self) -> Self {
+        self.create_if_not_exist = true;
         self
     }
 
@@ -255,7 +221,8 @@ impl ClientBuilder {
             path: self
                 .path
                 .ok_or_else(|| Error::MissingRequiredAttribute("path".to_string()))?,
-            create_options: self.create_options,
+            columns: self.columns,
+            create_if_not_exist: self.create_if_not_exist,
             table: None,
         })
     }

@@ -1,3 +1,4 @@
+use flowgen_core::cache::CacheOptions;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -20,7 +21,7 @@ pub struct Reader {
     pub path: String,
     pub batch_size: Option<usize>,
     pub has_header: Option<bool>,
-    pub cache_schema: Option<bool>,
+    pub cache_options: Option<CacheOptions>,
 }
 
 /// A configuration option for the File Writer.
