@@ -16,8 +16,9 @@ use tokio_stream::StreamExt;
 use tracing::{event, Level};
 
 const DEFAULT_MESSAGE_SUBJECT: &str = "salesforce.pubsub.in";
-const DEFAULT_PUBSUB_URI: &str = "https://api.pubsub.salesforce.com";
+const DEFAULT_PUBSUB_URL: &str = "https://api.pubsub.salesforce.com";
 const DEFAULT_PUBSUB_PORT: &str = "443";
+const DEFAULT_NUM_REQUESTED: i32 = 1000;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -58,8 +59,13 @@ pub struct Subscriber<T: Cache> {
 impl<T: Cache> flowgen_core::task::runner::Runner for Subscriber<T> {
     type Error = Error;
     async fn run(self) -> Result<(), Error> {
+        let endpoint = match &self.config.endpoint {
+            Some(endpoint) => endpoint,
+            None => &format!("{0}:{1}", DEFAULT_PUBSUB_URL, DEFAULT_PUBSUB_PORT),
+        };
+
         let service = flowgen_core::connect::service::ServiceBuilder::new()
-            .endpoint(format!("{0}:{1}", DEFAULT_PUBSUB_URI, DEFAULT_PUBSUB_PORT))
+            .endpoint(endpoint.to_owned())
             .build()
             .map_err(Error::Service)?
             .connect()
@@ -82,9 +88,9 @@ impl<T: Cache> flowgen_core::task::runner::Runner for Subscriber<T> {
 
         let mut handle_list: Vec<JoinHandle<Result<(), Error>>> = Vec::new();
 
-        for topic in self.config.topic_list.clone().iter() {
+        for topic in self.config.topic_list.clone().into_iter() {
             let pubsub: Arc<Mutex<super::context::Context>> = Arc::clone(&pubsub);
-            let topic = topic.clone();
+            let topic_name = topic.clone();
             let tx = self.tx.clone();
             let config = Arc::clone(&self.config);
             let cache = Arc::clone(&self.cache);
@@ -111,14 +117,34 @@ impl<T: Cache> flowgen_core::task::runner::Runner for Subscriber<T> {
                     .map_err(Error::SalesforcePubSub)?
                     .into_inner();
 
+                let num_requested = match config.num_requested {
+                    Some(num_requested) => num_requested,
+                    None => DEFAULT_NUM_REQUESTED,
+                };
+
+                let mut fetch_request = FetchRequest {
+                    topic_name,
+                    num_requested,
+                    ..Default::default()
+                };
+
+                if let Some(durable_consumer_opts) = config
+                    .durable_consumer_options
+                    .as_ref()
+                    .filter(|opts| opts.enabled && !opts.managed_subscription)
+                {
+                    let reply_id = cache
+                        .get(&durable_consumer_opts.name)
+                        .await
+                        .map_err(|_| Error::Cache())?;
+                    fetch_request.replay_id = reply_id.into();
+                    fetch_request.replay_preset = 2
+                }
+
                 let mut stream = pubsub
                     .lock()
                     .await
-                    .subscribe(FetchRequest {
-                        topic_name: topic,
-                        num_requested: 200,
-                        ..Default::default()
-                    })
+                    .subscribe(fetch_request)
                     .await
                     .map_err(Error::SalesforcePubSub)?
                     .into_inner();
