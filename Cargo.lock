@@ -1973,6 +1973,7 @@ version = "0.0.1"
 dependencies = [
  "arrow",
  "bincode",
+ "bytes",
  "chrono",
  "flowgen_core",
  "futures-util",

@@ -4,7 +4,7 @@ use flowgen_core::{
     convert::recordbatch::RecordBatchExt,
     stream::event::{Event, EventBuilder},
 };
-
+use bytes::Bytes;
 use salesforce_pubsub::eventbus::v1::{FetchRequest, SchemaRequest, TopicRequest};
 use serde_json::Value;
 use std::sync::Arc;
@@ -44,6 +44,8 @@ pub enum Error {
     MissingRequiredAttribute(String),
     #[error("cache error: {0}")]
     Cache(String),
+    #[error(transparent)]
+    Serde(#[from] serde_json::Error),
 }
 
 /// Processes events from a single Salesforce Pub/Sub topic.
@@ -168,6 +170,26 @@ impl<T: Cache> flowgen_core::task::runner::Runner for TopicListener<T> {
                                     .schema_json
                                     .parse()
                                     .map_err(Error::SerdeAvroSchema)?;
+
+                            
+
+                            // Cache schema for delta lake output
+                            if let Some(cache_options) = self
+                            .config
+                            .topic
+                            .cache_options
+                            .as_ref() {
+                                if let Some(insert_key) = &cache_options.insert_key {
+                                    let schema_string = serde_json::to_string(&schema_info).map_err(Error::Serde)?;
+                                    let schema_bytes = Bytes::from(schema_string);
+                                    self.cache
+                                        .put(insert_key.as_str(), schema_bytes)
+                                        .await
+                                        .map_err(|err| {
+                                            Error::Cache(format!("Failed to cache schema: {:?}", err))
+                                        })?;
+                                }
+                            };
 
                             // Deserialize Avro payload
                             let value = serde_avro_fast::from_datum_slice::<Value>(
