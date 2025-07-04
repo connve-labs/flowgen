@@ -170,12 +170,8 @@ impl<T: Cache> EventHandler<T> {
                                     .parse()
                                     .map_err(Error::SerdeAvroSchema)?;
 
-
                             let schema_as_string: String = format!("{:?}", schema);
                             
-                            println!("schema_as_string {:?}",schema_as_string);
-                          
-
                             // Cache schema for delta lake output
                             if let Some(cache_options) = self
                             .config
