@@ -171,24 +171,6 @@ impl<T: Cache> EventHandler<T> {
                                     .map_err(Error::SerdeAvroSchema)?;
 
                             let schema_as_string: String = format!("{:?}", schema);
-                            
-                            // Cache schema for delta lake output
-                            if let Some(cache_options) = self
-                            .config
-                            .topic
-                            .cache_options
-                            .as_ref() {
-                                if let Some(insert_key) = &cache_options.insert_key {
-                                    let schema_string = serde_json::to_string(&schema_as_string).map_err(Error::Serde)?;
-                                    let schema_bytes = Bytes::from(schema_string);
-                                    self.cache
-                                        .put(insert_key.as_str(), schema_bytes)
-                                        .await
-                                        .map_err(|err| {
-                                            Error::Cache(format!("Failed to cache schema: {:?}", err))
-                                        })?;
-                                }
-                            };
 
                             // Deserialize Avro payload
                             let value = serde_avro_fast::from_datum_slice::<Value>(
@@ -202,6 +184,24 @@ impl<T: Cache> EventHandler<T> {
                                 .to_string()
                                 .to_recordbatch()
                                 .map_err(Error::RecordBatch)?;
+
+                             // Cache schema for delta lake output
+                             if let Some(cache_options) = self
+                             .config
+                             .topic
+                             .cache_options
+                             .as_ref() {
+                                 if let Some(insert_key) = &cache_options.insert_key {
+                                     let schema_string = serde_json::to_string(&recordbatch.schema()).map_err(Error::Serde)?;
+                                     let schema_bytes = Bytes::from(schema_string);
+                                     self.cache
+                                         .put(insert_key.as_str(), schema_bytes)
+                                         .await
+                                         .map_err(|err| {
+                                             Error::Cache(format!("Failed to cache schema: {:?}", err))
+                                         })?;
+                                 }
+                             };
 
                             // Normalize topic name
                             let topic = topic_name.replace('/', ".").to_lowercase();
