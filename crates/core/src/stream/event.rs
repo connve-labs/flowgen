@@ -11,6 +11,7 @@ pub struct Event {
     pub extensions: Option<arrow::array::RecordBatch>,
     pub subject: String,
     pub current_task_id: Option<usize>,
+    pub id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -30,6 +31,7 @@ pub struct EventBuilder {
     pub extensions: Option<arrow::array::RecordBatch>,
     pub subject: Option<String>,
     pub current_task_id: Option<usize>,
+    pub id: Option<String>,
 }
 
 impl EventBuilder {
@@ -50,6 +52,10 @@ impl EventBuilder {
         self.current_task_id = Some(current_task_id);
         self
     }
+    pub fn id(mut self, id: String) -> Self {
+        self.id = Some(id);
+        self
+    }
     pub fn extensions(mut self, extensions: arrow::array::RecordBatch) -> Self {
         self.extensions = Some(extensions);
         self
@@ -63,6 +69,7 @@ impl EventBuilder {
             subject: self
                 .subject
                 .ok_or_else(|| Error::MissingRequiredAttribute("subject".to_string()))?,
+            id: self.id,
             current_task_id: self.current_task_id,
         })
     }

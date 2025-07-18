@@ -1,11 +1,10 @@
-use apache_avro::{types::Value as AvroValue, Schema};
 use flowgen_core::{
     cache::Cache,
     connect::client::Client,
     stream::event::{AvroData, Event, EventBuilder, EventData},
 };
 use salesforce_pubsub::eventbus::v1::{FetchRequest, SchemaRequest, TopicRequest};
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 use tokio::sync::{broadcast::Sender, Mutex};
 use tokio_stream::StreamExt;
 use tracing::{event, Level};
@@ -155,30 +154,32 @@ impl<T: Cache> EventHandler<T> {
                                 .put(&durable_consumer_opts.name, ce.replay_id.into())
                                 .await
                                 .map_err(|err| {
-                                    Error::Cache(format!("Failed to cache replay ID: {:?}", err))
+                                    Error::Cache(format!("Failed to cache replay ID: {err:?}"))
                                 })?;
                         }
 
                         if let Some(event) = ce.event {
+                            // Setup event data payload.
                             let data = AvroData {
                                 schema: schema_info.schema_json.clone(),
                                 raw_bytes: event.payload[..].to_vec(),
                             };
 
-                            // Normalize topic name
+                            // Normalize topic name.
                             let topic = topic_name.replace('/', ".").to_lowercase();
 
-                            // Generate event subject
+                            // Generate event subject.
                             let subject = if let Some(stripped) = topic.strip_prefix('.') {
                                 format!("{}.{}.{}", DEFAULT_MESSAGE_SUBJECT, stripped, event.id)
                             } else {
                                 format!("{}.{}.{}", DEFAULT_MESSAGE_SUBJECT, topic, event.id)
                             };
 
-                            // Build and send event
+                            // Build and send event.
                             let e = EventBuilder::new()
                                 .data(EventData::Avro(data))
                                 .subject(subject)
+                                .id(event.id)
                                 .current_task_id(self.current_task_id)
                                 .build()
                                 .map_err(Error::Event)?;
@@ -224,7 +225,7 @@ impl<T: Cache> flowgen_core::task::runner::Runner for Subscriber<T> {
         // Determine Pub/Sub endpoint
         let endpoint = match &self.config.endpoint {
             Some(endpoint) => endpoint,
-            None => &format!("{0}:{1}", DEFAULT_PUBSUB_URL, DEFAULT_PUBSUB_PORT),
+            None => &format!("{DEFAULT_PUBSUB_URL}:{DEFAULT_PUBSUB_PORT}"),
         };
 
         // Create gRPC service connection

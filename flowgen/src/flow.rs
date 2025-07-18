@@ -358,7 +358,7 @@ impl Flow<'_> {
                     });
                     task_list.push(task);
                 }
-                Task::object_store_subscriber(config) => {
+                Task::nats_object_store_subscriber(config) => {
                     let config = Arc::new(config.to_owned());
                     let tx = tx.clone();
                     let flow_config = Arc::clone(&self.config);

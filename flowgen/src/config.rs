@@ -24,7 +24,7 @@ pub enum Task {
     http(flowgen_http::config::Processor),
     nats_jetstream_subscriber(flowgen_nats::jetstream::config::Subscriber),
     nats_jetstream_publisher(flowgen_nats::jetstream::config::Publisher),
-    object_store_subscriber(flowgen_nats::jetstream::object_store::config::Source),
+    nats_object_store_subscriber(flowgen_nats::jetstream::object_store::config::Source),
     render(flowgen_core::task::render::config::Processor),
     salesforce_pubsub_subscriber(flowgen_salesforce::pubsub::config::Subscriber),
     salesforce_pubsub_publisher(flowgen_salesforce::pubsub::config::Publisher),

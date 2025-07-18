@@ -1,7 +1,3 @@
-//! Asynchronous file writing with timestamped output files.
-//!
-//! Receives events containing Arrow RecordBatch or Avro data and writes them
-//! to CSV files with automatically generated timestamps.
 use apache_avro::from_avro_datum;
 use bytes::Bytes;
 use chrono::Utc;
@@ -10,11 +6,11 @@ use object_store::{parse_url_opts, ObjectStore, PutPayload};
 use std::{fs::File, sync::Arc};
 use tokio::sync::{broadcast::Receiver, Mutex};
 use tracing::{event, Level};
-use url::{ParseOptions, Url};
+use url::Url;
 
-const DEFAULT_MESSAGE_SUBJECT: &str = "file.writer";
+/// Default subject prefix for logging messages.
+const DEFAULT_MESSAGE_SUBJECT: &str = "object_store.writer";
 
-/// File writing errors.
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
 pub enum Error {
@@ -24,53 +20,38 @@ pub enum Error {
     Arrow(#[from] arrow::error::ArrowError),
     #[error(transparent)]
     Avro(#[from] apache_avro::Error),
-    #[error("missing required event attrubute")]
+    #[error(transparent)]
+    ParseUrl(#[from] url::ParseError),
+    #[error(transparent)]
+    ObjectStore(#[from] object_store::Error),
+    #[error("missing required attribute")]
     MissingRequiredAttribute(String),
-    #[error("no filename in provided path")]
-    EmptyFileName(),
+    #[error("no path provided")]
+    EmptyPath(),
     #[error("no value in provided str")]
     EmptyStr(),
 }
 
-/// Event-driven file writer with timestamped output.
-pub struct Writer {
-    config: Arc<super::config::Writer>,
-    rx: Receiver<Event>,
-    current_task_id: usize,
-}
-
-/// Processes individual file write operations.
+/// Handles processing of individual events by writing them to object storage.
 struct EventHandler {
-    config: Arc<super::config::Writer>,
     object_store: Arc<Mutex<Box<dyn ObjectStore>>>,
     path: object_store::path::Path,
 }
 
 impl EventHandler {
-    /// Writes event data to timestamped CSV file.
+    /// Processes an event and writes it to the configured object store.
     async fn handle(self, event: Event) -> Result<(), Error> {
-        let file_stem = self
-            .config
-            .path
-            .file_stem()
-            .ok_or_else(Error::EmptyFileName)?
-            .to_str()
-            .ok_or_else(Error::EmptyStr)?;
-
-        let file_ext = self
-            .config
-            .path
-            .extension()
-            .ok_or_else(Error::EmptyFileName)?
-            .to_str()
-            .ok_or_else(Error::EmptyStr)?;
-
         let timestamp = Utc::now().timestamp_micros();
-        let filename = format!("{file_stem}.{timestamp}.{file_ext}");
-        let file = File::create(filename).map_err(Error::IO)?;
+        let filename = match event.id {
+            Some(id) => id,
+            None => {
+                format!("{timestamp}")
+            }
+        };
 
         match &event.data {
             flowgen_core::stream::event::EventData::ArrowRecordBatch(data) => {
+                let file = File::create(&filename).map_err(Error::IO)?;
                 arrow::csv::WriterBuilder::new()
                     .with_header(true)
                     .build(file)
@@ -78,63 +59,64 @@ impl EventHandler {
                     .map_err(Error::Arrow)?;
             }
             flowgen_core::stream::event::EventData::Avro(data) => {
-                // Instead of writing directly to a file, write to a Vec<u8> buffer
                 let schema = apache_avro::Schema::parse_str(&data.schema).map_err(Error::Avro)?;
                 let value = from_avro_datum(&schema, &mut &data.raw_bytes[..], None)
                     .map_err(Error::Avro)?;
 
-                // Create an in-memory buffer
                 let mut buffer = Vec::new();
                 {
                     let mut writer = apache_avro::Writer::new(&schema, &mut buffer);
                     writer.append(value).map_err(Error::Avro)?;
                     writer.flush().map_err(Error::Avro)?;
                 }
-
-                // Now upload the buffer to object storage.
+                let date = format!("{}", Utc::now().format("%Y-%m-%d"));
+                let path = object_store::path::Path::from(format!(
+                    "{}/{}/{}.avro",
+                    self.path, date, filename
+                ));
                 let payload = PutPayload::from_bytes(Bytes::from(buffer));
                 self.object_store
                     .lock()
                     .await
-                    .put(&self.path, payload)
+                    .put(&path, payload)
                     .await
-                    .unwrap();
+                    .map_err(Error::ObjectStore)?;
             }
         }
 
-        let subject = format!("{DEFAULT_MESSAGE_SUBJECT}.{file_stem}.{timestamp}.{file_ext}");
+        let subject = format!("{DEFAULT_MESSAGE_SUBJECT}.{filename}");
         event!(Level::INFO, "event processed: {}", subject);
         Ok(())
     }
 }
+
+/// Object store writer that processes events from a broadcast receiver.
+pub struct Writer {
+    config: Arc<super::config::Writer>,
+    rx: Receiver<Event>,
+    current_task_id: usize,
+}
+
 impl flowgen_core::task::runner::Runner for Writer {
     type Error = Error;
 
-    /// Processes incoming events and spawns write tasks.
     async fn run(mut self) -> Result<(), Self::Error> {
-        // Alternatively can create an ObjectStore from an S3 URL
-
-        let path = self.config.path.to_str().unwrap();
-        let url = Url::parse(path).unwrap();
+        let path = self.config.path.to_str().ok_or_else(Error::EmptyPath)?;
+        let url = Url::parse(path).map_err(Error::ParseUrl)?;
         let (object_store, path) = parse_url_opts(
             &url,
             vec![("google_service_account".to_string(), "/etc/gcp.json")],
         )
-        .unwrap();
+        .map_err(Error::ObjectStore)?;
+
         let object_store = Arc::new(Mutex::new(object_store));
 
         while let Ok(event) = self.rx.recv().await {
-            // Process events from previous task only.
             if event.current_task_id == Some(self.current_task_id - 1) {
                 let object_store = Arc::clone(&object_store);
                 let path = path.clone();
 
-                let config = Arc::clone(&self.config);
-                let event_handler = EventHandler {
-                    config,
-                    object_store,
-                    path,
-                };
+                let event_handler = EventHandler { object_store, path };
                 tokio::spawn(async move {
                     if let Err(err) = event_handler.handle(event).await {
                         event!(Level::ERROR, "{}", err);
@@ -146,7 +128,7 @@ impl flowgen_core::task::runner::Runner for Writer {
     }
 }
 
-/// Builder for Writer instances.
+/// Builder pattern for constructing Writer instances.
 #[derive(Default)]
 pub struct WriterBuilder {
     config: Option<Arc<super::config::Writer>>,
