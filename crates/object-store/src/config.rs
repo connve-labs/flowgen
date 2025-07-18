@@ -5,7 +5,7 @@
 
 use flowgen_core::cache::CacheOptions;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 
 /// Object Store reader configuration.
 
@@ -23,4 +23,6 @@ pub struct Reader {
 #[derive(PartialEq, Default, Clone, Debug, Deserialize, Serialize)]
 pub struct Writer {
     pub path: PathBuf,
+    pub credentials: Option<PathBuf>,
+    pub options: Option<HashMap<String, String>>,
 }

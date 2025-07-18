@@ -3,7 +3,7 @@ use bytes::Bytes;
 use chrono::Utc;
 use flowgen_core::stream::event::Event;
 use object_store::{parse_url_opts, ObjectStore, PutPayload};
-use std::{fs::File, sync::Arc};
+use std::{collections::HashMap, fs::File, sync::Arc};
 use tokio::sync::{broadcast::Receiver, Mutex};
 use tracing::{event, Level};
 use url::Url;
@@ -103,11 +103,20 @@ impl flowgen_core::task::runner::Runner for Writer {
     async fn run(mut self) -> Result<(), Self::Error> {
         let path = self.config.path.to_str().ok_or_else(Error::EmptyPath)?;
         let url = Url::parse(path).map_err(Error::ParseUrl)?;
-        let (object_store, path) = parse_url_opts(
-            &url,
-            vec![("google_service_account".to_string(), "/etc/gcp.json")],
-        )
-        .map_err(Error::ObjectStore)?;
+
+        let mut parse_opts = match &self.config.options {
+            Some(options) => options.clone(),
+            None => HashMap::new(),
+        };
+
+        if let Some(credentials) = &self.config.credentials {
+            parse_opts.insert(
+                "google_service_account".to_string(),
+                credentials.to_string_lossy().to_string(),
+            );
+        }
+
+        let (object_store, path) = parse_url_opts(&url, parse_opts).map_err(Error::ObjectStore)?;
 
         let object_store = Arc::new(Mutex::new(object_store));
 
