@@ -1,12 +1,12 @@
 use apache_avro::from_avro_datum;
 use bytes::Bytes;
 use chrono::Utc;
+use flowgen_core::connect::client::Client;
 use flowgen_core::stream::event::Event;
-use object_store::{parse_url_opts, ObjectStore, PutPayload};
-use std::{collections::HashMap, fs::File, sync::Arc};
+use object_store::PutPayload;
+use std::{fs::File, sync::Arc};
 use tokio::sync::{broadcast::Receiver, Mutex};
 use tracing::{event, Level};
-use url::Url;
 
 /// Default subject prefix for logging messages.
 const DEFAULT_MESSAGE_SUBJECT: &str = "object_store.writer";
@@ -21,21 +21,18 @@ pub enum Error {
     #[error(transparent)]
     Avro(#[from] apache_avro::Error),
     #[error(transparent)]
-    ParseUrl(#[from] url::ParseError),
-    #[error(transparent)]
     ObjectStore(#[from] object_store::Error),
+    #[error(transparent)]
+    ObjectStoreClient(#[from] super::client::Error),
     #[error("missing required attribute")]
     MissingRequiredAttribute(String),
-    #[error("no path provided")]
-    EmptyPath(),
-    #[error("no value in provided str")]
-    EmptyStr(),
+    #[error("could not initialize object store context")]
+    NoObjectStoreContext(),
 }
 
 /// Handles processing of individual events by writing them to object storage.
 struct EventHandler {
-    object_store: Arc<Mutex<Box<dyn ObjectStore>>>,
-    path: object_store::path::Path,
+    client: Arc<Mutex<super::client::Client>>,
 }
 
 impl EventHandler {
@@ -48,6 +45,12 @@ impl EventHandler {
                 format!("{timestamp}")
             }
         };
+
+        let mut client_guard = self.client.lock().await;
+        let context = client_guard
+            .context
+            .as_mut()
+            .ok_or_else(Error::NoObjectStoreContext)?;
 
         match &event.data {
             flowgen_core::stream::event::EventData::ArrowRecordBatch(data) => {
@@ -72,12 +75,11 @@ impl EventHandler {
                 let date = format!("{}", Utc::now().format("%Y-%m-%d"));
                 let path = object_store::path::Path::from(format!(
                     "{}/{}/{}.avro",
-                    self.path, date, filename
+                    context.path, date, filename
                 ));
                 let payload = PutPayload::from_bytes(Bytes::from(buffer));
-                self.object_store
-                    .lock()
-                    .await
+                context
+                    .object_store
                     .put(&path, payload)
                     .await
                     .map_err(Error::ObjectStore)?;
@@ -101,31 +103,29 @@ impl flowgen_core::task::runner::Runner for Writer {
     type Error = Error;
 
     async fn run(mut self) -> Result<(), Self::Error> {
-        let path = self.config.path.to_str().ok_or_else(Error::EmptyPath)?;
-        let url = Url::parse(path).map_err(Error::ParseUrl)?;
+        let mut client_builder = super::client::ClientBuilder::new().path(self.config.path.clone());
 
-        let mut parse_opts = match &self.config.options {
-            Some(options) => options.clone(),
-            None => HashMap::new(),
-        };
-
+        if let Some(options) = &self.config.options {
+            client_builder = client_builder.options(options.clone());
+        }
         if let Some(credentials) = &self.config.credentials {
-            parse_opts.insert(
-                "google_service_account".to_string(),
-                credentials.to_string_lossy().to_string(),
-            );
+            client_builder = client_builder.credentials(credentials.to_path_buf());
         }
 
-        let (object_store, path) = parse_url_opts(&url, parse_opts).map_err(Error::ObjectStore)?;
-
-        let object_store = Arc::new(Mutex::new(object_store));
+        let client = Arc::new(Mutex::new(
+            client_builder
+                .build()
+                .map_err(Error::ObjectStoreClient)?
+                .connect()
+                .await
+                .map_err(Error::ObjectStoreClient)?,
+        ));
 
         while let Ok(event) = self.rx.recv().await {
             if event.current_task_id == Some(self.current_task_id - 1) {
-                let object_store = Arc::clone(&object_store);
-                let path = path.clone();
+                let client = Arc::clone(&client);
 
-                let event_handler = EventHandler { object_store, path };
+                let event_handler = EventHandler { client };
                 tokio::spawn(async move {
                     if let Err(err) = event_handler.handle(event).await {
                         event!(Level::ERROR, "{}", err);
