@@ -41,7 +41,6 @@ impl FlowgenMessageExt for flowgen_core::stream::event::Event {
                 Ok(event)
             }
             flowgen_core::stream::event::EventData::Avro(data) => {
-                println!("{:?}", "here");
                 let serialized = serialize(&data)?;
                 let event = Publish::build().payload(serialized.into());
                 Ok(event)

@@ -1,16 +1,16 @@
 {
     "flow": {
-        "name": "salesforce_pubsub_subscriber_account",
+        "name": "salesforce_pubsub_account_subscriber",
         "tasks": [
             {
                 "salesforce_pubsub_subscriber": {
-                    "credentials": "/etc/sfdc/credentials.json",
+                    "credentials": "/etc/salesforce/credentials.json",
                     "topic": {
                         "name": "/data/AccountChangeEvent",
                         "durable_consumer_options": {
                             "enabled": true,
                             "managed_subscription": false,
-                            "name": "salesforce_pubsub_subscriber_account"
+                            "name": "salesforce_pubsub_account_subscriber"
                         }
                     }
                 }
