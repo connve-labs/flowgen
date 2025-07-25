@@ -92,13 +92,6 @@ pub enum Error {
         flow: String,
         task_id: usize,
     },
-    #[error("flow: {flow}, task_id: {task_id}, source: {source}")]
-    RenderProcessor {
-        #[source]
-        source: flowgen_core::task::render::processor::Error,
-        flow: String,
-        task_id: usize,
-    },
     #[error("missing required event attribute")]
     MissingRequiredAttribute(String),
 }
@@ -407,7 +400,6 @@ impl Flow<'_> {
                     });
                     task_list.push(task);
                 }
-                Task::render(config) => todo!(),
                 Task::object_store_writer(config) => {
                     let config = Arc::new(config.to_owned());
                     let rx = tx.subscribe();
