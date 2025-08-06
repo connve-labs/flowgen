@@ -87,23 +87,8 @@ impl EventHandler {
                     "lineEnding": Some(self.config.line_ending.clone()),
                 });
             }
-            super::config::Operation::Insert => {
-                todo!()
-            }
-            super::config::Operation::Update => {
-                todo!()
-            }
-            super::config::Operation::Upsert => {
-                todo!()
-            }
-            super::config::Operation::Delete => {
-                todo!()
-            }
-            super::config::Operation::HardDelete => {
-                todo!()
-            }
             _ => {
-                payload = json!({});
+                todo!("Implement other operations like Insert, Update, Upsert, Delete, HardDelete");
             }
         }
 
