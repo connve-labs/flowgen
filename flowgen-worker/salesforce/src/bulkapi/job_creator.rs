@@ -83,7 +83,7 @@ impl EventHandler {
                     "contentType": Some(&self.config.content_type),
                     "columnDelimiter": Some(&self.config.column_delimiter),
                     "lineEnding": Some(&self.config.line_ending),
-                });
+                })
             }
             _ => {
                 todo!("Implement other operations like Insert, Update, Upsert, Delete, HardDelete");
