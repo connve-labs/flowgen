@@ -11,7 +11,7 @@ pub enum Error {
     IO(#[from] std::io::Error),
 }
 
-/// Shared HTTP server manager that allows multiple webhook processors to register routes.
+/// Shared HTTP Server manager that allows multiple webhook processors to register routes.
 #[derive(Debug, Clone)]
 pub struct HttpServerManager {
     routes: Arc<RwLock<HashMap<String, MethodRouter>>>,
@@ -19,7 +19,7 @@ pub struct HttpServerManager {
 }
 
 impl HttpServerManager {
-    /// Create a new HTTP server manager.
+    /// Create a new HTTP Server.
     pub fn new() -> Self {
         Self {
             routes: Arc::new(RwLock::new(HashMap::new())),
@@ -27,18 +27,18 @@ impl HttpServerManager {
         }
     }
 
-    /// Register a route with the server manager.
+    /// Register a route with the HTTP Server.
     pub async fn register_route(&self, path: String, method_router: MethodRouter) {
         let mut routes = self.routes.write().await;
         event!(Level::INFO, "Registering HTTP route: {}", path);
         routes.insert(path, method_router);
     }
 
-    /// Start the HTTP server with all registered routes.
+    /// Start the HTTP Server with all registered routes.
     pub async fn start_server(&self) -> Result<(), Error> {
         let mut server_started = self.server_started.lock().await;
         if *server_started {
-            event!(Level::WARN, "HTTP server already started");
+            event!(Level::WARN, "HTTP Server already started");
             return Ok(());
         }
 
@@ -56,7 +56,7 @@ impl HttpServerManager {
             tokio::net::TcpListener::bind(format!("0.0.0.0:{DEFAULT_HTTP_PORT}")).await?;
         event!(
             Level::INFO,
-            "Starting HTTP server on port {}",
+            "Starting HTTP Server on port {}",
             DEFAULT_HTTP_PORT
         );
 

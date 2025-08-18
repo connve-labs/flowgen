@@ -114,15 +114,13 @@ pub struct Flow<'a> {
     config: Arc<FlowConfig>,
     cache_credential_path: &'a Path,
     pub task_list: Option<Vec<JoinHandle<Result<(), Error>>>>,
+    http_server: Arc<flowgen_http::server::HttpServerManager>,
 }
 
 impl Flow<'_> {
     pub async fn run(mut self) -> Result<Self, Error> {
         let mut task_list: Vec<JoinHandle<Result<(), Error>>> = Vec::new();
         let (tx, _): (Sender<Event>, Receiver<Event>) = tokio::sync::broadcast::channel(1000);
-
-        // Create shared HTTP server manager for webhook processors
-        let http_server_manager = Arc::new(flowgen_http::server::HttpServerManager::new());
 
         let cache = flowgen_nats::cache::CacheBuilder::new()
             .credentials_path(self.cache_credential_path.to_path_buf())
@@ -251,13 +249,13 @@ impl Flow<'_> {
                     let config = Arc::new(config.to_owned());
                     let tx = tx.clone();
                     let flow_config = Arc::clone(&self.config);
-                    let server_manager = Arc::clone(&http_server_manager);
+                    let http_server = Arc::clone(&self.http_server);
                     let task: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
                         flowgen_http::webhook::ProcessorBuilder::new()
                             .config(config)
                             .sender(tx)
                             .current_task_id(i)
-                            .server_manager(server_manager)
+                            .server_manager(http_server)
                             .build()
                             .await
                             .map_err(|e| Error::HttpWebhookProcessor {
@@ -480,20 +478,6 @@ impl Flow<'_> {
             }
         }
 
-        // Start HTTP server after all webhook processors has been created.
-        let http_server_task: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
-            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-            http_server_manager
-                .start_server()
-                .await
-                .map_err(|e| Error::HttpServer {
-                    source: e,
-                    flow: "http_server".to_string(),
-                    task_id: 0,
-                })
-        });
-        task_list.push(http_server_task);
-
         self.task_list = Some(task_list);
         Ok(self)
     }
@@ -503,6 +487,7 @@ impl Flow<'_> {
 pub struct FlowBuilder<'a> {
     config: Option<Arc<FlowConfig>>,
     cache_credentials_path: Option<&'a Path>,
+    http_server: Option<Arc<flowgen_http::server::HttpServerManager>>,
 }
 
 impl<'a> FlowBuilder<'a> {
@@ -520,6 +505,11 @@ impl<'a> FlowBuilder<'a> {
         self
     }
 
+    pub fn http_server(mut self, server: Arc<flowgen_http::server::HttpServerManager>) -> Self {
+        self.http_server = Some(server);
+        self
+    }
+
     pub fn build(self) -> Result<Flow<'a>, Error> {
         Ok(Flow {
             config: self
@@ -529,6 +519,9 @@ impl<'a> FlowBuilder<'a> {
                 Error::MissingRequiredAttribute("cache_credential_path".to_string())
             })?,
             task_list: None,
+            http_server: self
+                .http_server
+                .ok_or_else(|| Error::MissingRequiredAttribute("http_server".to_string()))?,
         })
     }
 }

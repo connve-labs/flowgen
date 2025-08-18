@@ -18,7 +18,6 @@ pub enum Error {
     InvalidPath,
 }
 /// Main application struct that orchestrates flow execution.
-///
 /// The App loads flow configurations from files and runs them concurrently,
 /// with optional caching support based on the global configuration.
 pub struct App {
@@ -52,16 +51,22 @@ impl flowgen_core::task::runner::Runner for App {
         let flow_configs: Vec<FlowConfig> = glob::glob(glob_pattern)?
             .map(|path| -> Result<FlowConfig, Error> {
                 let path = path?;
-                event!(Level::INFO, "loading flow {:?}", path);
+                event!(Level::INFO, "Loading flow {:?}", path);
                 let config = Config::builder().add_source(File::from(path)).build()?;
                 Ok(config.try_deserialize::<FlowConfig>()?)
             })
             .collect::<Result<Vec<_>, _>>()?;
 
+        // Create shared HTTP Server manager and start it immediately.
+        let http_server = Arc::new(flowgen_http::server::HttpServerManager::new());
+
         for config in flow_configs {
             let app_config = Arc::clone(&app_config);
+            let http_server = Arc::clone(&http_server);
             let handle = tokio::spawn(async move {
-                let mut flow_builder = super::flow::FlowBuilder::new().config(Arc::new(config));
+                let mut flow_builder = super::flow::FlowBuilder::new()
+                    .config(Arc::new(config))
+                    .http_server(http_server);
 
                 if let Some(cache) = &app_config.cache {
                     if cache.enabled {
@@ -74,7 +79,18 @@ impl flowgen_core::task::runner::Runner for App {
             config_handles.push(handle);
         }
 
-        futures_util::future::join_all(config_handles).await;
+        let server_handle = tokio::spawn(async move {
+            if let Err(e) = http_server.start_server().await {
+                event!(Level::ERROR, "Failed to start HTTP Server: {}", e);
+            }
+        });
+
+        // Wait for all flows and server
+        let (_, _) = tokio::join!(
+            futures_util::future::join_all(config_handles),
+            server_handle
+        );
+
         Ok(())
     }
 }
@@ -87,7 +103,7 @@ async fn run_flow(flow_builder: super::flow::FlowBuilder<'_>) {
     let flow = match flow_builder.build() {
         Ok(flow) => flow,
         Err(e) => {
-            event!(Level::ERROR, "flow build failed: {}", e);
+            event!(Level::ERROR, "Flow build failed: {}", e);
             return;
         }
     };
