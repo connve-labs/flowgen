@@ -2075,6 +2075,7 @@ dependencies = [
  "flowgen_core",
  "futures-util",
  "oauth2",
+ "reqwest 0.12.15",
  "salesforce_pubsub",
  "serde",
  "serde_avro_fast",

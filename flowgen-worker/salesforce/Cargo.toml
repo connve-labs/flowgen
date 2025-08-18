@@ -29,3 +29,4 @@ chrono = { workspace = true }
 tracing = { workspace = true }
 bytes = { workspace = true }
 apache-avro = { workspace = true }
+reqwest = { workspace = true }

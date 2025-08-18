@@ -47,21 +47,7 @@ pub enum Error {
         flow: String,
         task_id: usize,
     },
-    #[error("Flow: {flow}, task_id: {task_id}, source: {source}")]
-    HttpWebhookProcessor {
-        #[source]
-        source: flowgen_http::webhook::Error,
-        flow: String,
-        task_id: usize,
-    },
-    #[error("Flow: {flow}, task_id: {task_id}, source: {source}")]
-    HttpServerManager {
-        #[source]
-        source: flowgen_http::server::Error,
-        flow: String,
-        task_id: usize,
-    },
-    #[error("Flow: {flow}, task_id: {task_id}, source: {source}")]
+    #[error("flow: {flow}, task_id: {task_id}, source: {source}")]
     NatsJetStreamPublisher {
         #[source]
         source: flowgen_nats::jetstream::publisher::Error,
@@ -270,6 +256,38 @@ impl Flow<'_> {
                     });
                     task_list.push(task);
                 }
+
+                Task::salesforce_bulkapi_job_creator(config) => {
+                    let config = Arc::new(config.to_owned());
+                    let rx = tx.subscribe();
+                    let tx = tx.clone();
+                    let flow_config = Arc::clone(&self.config);
+                    let task: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
+                        flowgen_salesforce::bulkapi::job_creator::ProcessorBuilder::new()
+                            .config(config)
+                            .receiver(rx)
+                            .sender(tx)
+                            .current_task_id(i)
+                            .build()
+                            .await
+                            .map_err(|e| Error::BulkapiJobCreatorError {
+                                source: e,
+                                flow: flow_config.flow.name.to_owned(),
+                                task_id: i,
+                            })?
+                            .run()
+                            .await
+                            .map_err(|e| Error::BulkapiJobCreatorError {
+                                source: e,
+                                flow: flow_config.flow.name.to_owned(),
+                                task_id: i,
+                            })?;
+
+                        Ok(())
+                    });
+                    task_list.push(task);
+                }
+
                 Task::nats_jetstream_subscriber(config) => {
                     let config = Arc::new(config.to_owned());
                     let tx = tx.clone();
