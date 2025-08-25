@@ -11,7 +11,6 @@ path = "src/main.rs"
 
 [dependencies]
 flowgen_core = { path = "../flowgen-worker/core" }
-flowgen_deltalake = { path = "../flowgen-worker/deltalake" }
 flowgen_http = { path = "../flowgen-worker/http" }
 flowgen_salesforce = { path = "../flowgen-worker/salesforce" }
 flowgen_nats = { path = "../flowgen-worker/nats" }

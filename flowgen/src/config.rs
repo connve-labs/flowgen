@@ -15,7 +15,6 @@ pub struct Flow {
 #[derive(PartialEq, Clone, Debug, Deserialize, Serialize)]
 #[allow(non_camel_case_types)]
 pub enum Task {
-    // deltalake_writer(flowgen_deltalake::config::Writer),
     convert(flowgen_core::task::convert::config::Processor),
     enumerate(flowgen_core::task::enumerate::config::Processor),
     object_store_reader(flowgen_object_store::config::Reader),
@@ -27,7 +26,6 @@ pub enum Task {
     nats_jetstream_publisher(flowgen_nats::jetstream::config::Publisher),
     salesforce_pubsub_subscriber(flowgen_salesforce::pubsub::config::Subscriber),
     salesforce_pubsub_publisher(flowgen_salesforce::pubsub::config::Publisher),
-    salesforce_bulkapi_job_creator(flowgen_salesforce::bulkapi::config::JobCreator),
 }
 
 #[derive(PartialEq, Clone, Debug, Deserialize, Serialize)]

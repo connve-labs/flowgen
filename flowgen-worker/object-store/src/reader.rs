@@ -101,8 +101,7 @@ impl<T: Cache> EventHandler<T> {
 
                     if let Some(cache_options) = &self.config.cache_options {
                         if let Some(insert_key) = &cache_options.insert_key {
-                            let schema_string = serde_json::to_string(&schema)?;
-                            let schema_bytes = Bytes::from(schema_string);
+                            let schema_bytes = Bytes::from(schema.to_string());
                             self.cache
                                 .put(insert_key.as_str(), schema_bytes)
                                 .await

@@ -62,7 +62,6 @@ struct EventHandler {
 
 struct AvroSerializerOptions {
     schema_string: String,
-    // Store the serializer config wrapped in Mutex for thread-safe access
     serializer_config: Mutex<ser::SerializerConfig<'static>>,
 }
 
