@@ -25,12 +25,6 @@ pub struct Subscriber {
 impl crate::task::runner::Runner for Subscriber {
     type Error = Error;
     async fn run(self) -> Result<(), Error> {
-        // Generate event subject.
-        let subject = generate_subject(
-            self.config.label.as_deref(),
-            DEFAULT_MESSAGE_SUBJECT,
-            SubjectSuffix::Timestamp,
-        );
         let mut counter = 0;
         loop {
             time::sleep(Duration::from_secs(self.config.interval)).await;
@@ -41,6 +35,13 @@ impl crate::task::runner::Runner for Subscriber {
                 None => json!(null),
             };
 
+            // Generate event subject.
+            let subject = generate_subject(
+                self.config.label.as_deref(),
+                DEFAULT_MESSAGE_SUBJECT,
+                SubjectSuffix::Timestamp,
+            );
+            // Build and send event.
             let e = EventBuilder::new()
                 .data(EventData::Json(data))
                 .subject(subject.clone())

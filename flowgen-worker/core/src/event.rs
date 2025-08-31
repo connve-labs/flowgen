@@ -31,7 +31,7 @@ pub fn generate_subject(label: Option<&str>, base_subject: &str, suffix: Subject
     };
     match label {
         Some(label) => format!("{}.{}", label.to_lowercase(), suffix_str),
-        None => format!("{}.{}", base_subject, suffix_str),
+        None => format!("{base_subject}.{suffix_str}"),
     }
 }
 

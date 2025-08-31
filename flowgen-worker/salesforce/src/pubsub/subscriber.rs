@@ -162,14 +162,12 @@ impl<T: Cache> EventHandler<T> {
                             // Normalize topic name.
                             let topic = topic_name.replace('/', ".").to_lowercase();
 
-                            // Generate base subject.
+                            // Generate event subject.
                             let base_subject = if let Some(stripped) = topic.strip_prefix('.') {
                                 format!("{DEFAULT_MESSAGE_SUBJECT}.{stripped}")
                             } else {
                                 format!("{DEFAULT_MESSAGE_SUBJECT}.{topic}")
                             };
-
-                            // Generate event subject.
                             let subject = generate_subject(
                                 self.config.label.as_deref(),
                                 &base_subject,

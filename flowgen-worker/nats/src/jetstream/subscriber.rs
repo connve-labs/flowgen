@@ -41,17 +41,14 @@ impl flowgen_core::task::runner::Runner for Subscriber {
     async fn run(self) -> Result<(), Error> {
         let client = crate::client::ClientBuilder::new()
             .credentials_path(self.config.credentials.clone())
-            .build()
-            .map_err(Error::NatsClient)?
+            .build()?
             .connect()
-            .await
-            .map_err(Error::NatsClient)?;
+            .await?;
 
         if let Some(jetstream) = client.jetstream {
             let consumer = jetstream
                 .get_stream(self.config.stream.clone())
-                .await
-                .map_err(Error::NatsJetStreamGetStream)?
+                .await?
                 .get_or_create_consumer(
                     &self.config.durable_name,
                     jetstream::consumer::pull::Config {
@@ -60,28 +57,23 @@ impl flowgen_core::task::runner::Runner for Subscriber {
                         ..Default::default()
                     },
                 )
-                .await
-                .map_err(Error::NatsJetStreamConsumer)?;
+                .await?;
 
             loop {
                 if let Some(delay_secs) = self.config.delay_secs {
                     time::sleep(Duration::from_secs(delay_secs)).await
                 }
 
-                let mut stream = consumer
-                    .messages()
-                    .await
-                    .map_err(Error::NatsJetStream)?
-                    .take(self.config.batch_size);
+                let mut stream = consumer.messages().await?.take(self.config.batch_size);
 
                 while let Some(message) = stream.next().await {
                     if let Ok(message) = message {
-                        let mut e = message.to_event().unwrap();
+                        let mut e = message.to_event()?;
                         message.ack().await.map_err(Error::Other)?;
                         e.current_task_id = Some(self.current_task_id);
 
                         let subject = e.subject.clone();
-                        self.tx.send(e).map_err(Error::SendMessage)?;
+                        self.tx.send(e)?;
                         event!(Level::INFO, "Event processed: {}", subject);
                     }
                 }

@@ -83,13 +83,6 @@ impl<T: Cache> EventHandler<T> {
             .extension()
             .ok_or_else(Error::NoFileExtension)?;
 
-        // Generate event subject.
-        let subject = generate_subject(
-            self.config.label.as_deref(),
-            DEFAULT_MESSAGE_SUBJECT,
-            SubjectSuffix::Timestamp,
-        );
-
         match result.payload {
             GetResultPayload::File(mut file, _) => {
                 let file_type = match extension {
@@ -131,7 +124,14 @@ impl<T: Cache> EventHandler<T> {
                 let event_data_list = EventData::from_reader(reader, file_type)?;
 
                 for event_data in event_data_list {
-                    // Prepare and send event.
+                    // Generate event subject.
+                    let subject = generate_subject(
+                        self.config.label.as_deref(),
+                        DEFAULT_MESSAGE_SUBJECT,
+                        SubjectSuffix::Timestamp,
+                    );
+
+                    // Build and send event.
                     let e = EventBuilder::new()
                         .subject(subject.clone())
                         .data(event_data)

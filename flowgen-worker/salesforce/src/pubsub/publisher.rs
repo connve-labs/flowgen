@@ -2,7 +2,7 @@ use chrono::Utc;
 use flowgen_core::{
     client::Client,
     config::ConfigExt,
-    event::Event,
+    event::{generate_subject, Event, SubjectSuffix},
     serde::{MapExt, StringExt},
 };
 use salesforce_pubsub::eventbus::v1::{ProducerEvent, PublishRequest, SchemaRequest, TopicRequest};
@@ -144,9 +144,14 @@ impl flowgen_core::task::runner::Runner for Publisher {
                     .await
                     .map_err(Error::SalesforcePubSub)?;
 
-                let timestamp = Utc::now().timestamp_micros();
+                // Generate event subject/
                 let topic = topic_info.topic_name.replace('/', ".").to_lowercase();
-                let subject = format!("{}.{}.{}", DEFAULT_MESSAGE_SUBJECT, &topic[1..], timestamp);
+                let base_subject = format!("{}.{}", DEFAULT_MESSAGE_SUBJECT, &topic[1..]);
+                let subject = generate_subject(
+                    self.config.label.as_deref(),
+                    &base_subject,
+                    SubjectSuffix::Timestamp,
+                );
 
                 event!(Level::INFO, "Event processed: {}", subject);
             }

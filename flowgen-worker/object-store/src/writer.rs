@@ -111,6 +111,7 @@ impl EventHandler {
         let payload = PutPayload::from_bytes(Bytes::from(writer));
         context.object_store.put(&object_path, payload).await?;
 
+        // Generate event subject.
         let base_subject = format!("{DEFAULT_MESSAGE_SUBJECT}.{filename}");
         let subject = generate_subject(
             self.config.label.as_deref(),

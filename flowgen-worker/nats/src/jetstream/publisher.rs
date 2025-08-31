@@ -56,11 +56,9 @@ impl flowgen_core::task::runner::Runner for Publisher {
     async fn run(mut self) -> Result<(), Self::Error> {
         let client = crate::client::ClientBuilder::new()
             .credentials_path(self.config.credentials.clone())
-            .build()
-            .map_err(Error::NatsClientAuth)?
+            .build()?
             .connect()
-            .await
-            .map_err(Error::NatsClientAuth)?;
+            .await?;
 
         if let Some(jetstream) = client.jetstream {
             let mut max_age = 86400;
@@ -83,30 +81,17 @@ impl flowgen_core::task::runner::Runner for Publisher {
 
             match stream {
                 Ok(_) => {
-                    let mut subjects = stream
-                        .map_err(Error::NatsGetStream)?
-                        .info()
-                        .await
-                        .map_err(Error::NatsRequest)?
-                        .config
-                        .subjects
-                        .clone();
+                    let mut subjects = stream?.info().await?.config.subjects.clone();
 
                     subjects.extend(self.config.subjects.clone());
                     subjects.sort();
                     subjects.dedup();
                     stream_config.subjects = subjects;
 
-                    jetstream
-                        .update_stream(stream_config)
-                        .await
-                        .map_err(Error::NatsCreateStream)?;
+                    jetstream.update_stream(stream_config).await?;
                 }
                 Err(_) => {
-                    jetstream
-                        .create_stream(stream_config)
-                        .await
-                        .map_err(Error::NatsCreateStream)?;
+                    jetstream.create_stream(stream_config).await?;
                 }
             }
 

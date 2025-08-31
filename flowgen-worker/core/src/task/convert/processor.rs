@@ -94,7 +94,7 @@ impl EventHandler {
             SubjectSuffix::Timestamp,
         );
 
-        // Send processor output as event.
+        // Build and send event.
         let e = EventBuilder::new()
             .data(data)
             .subject(subject.clone())

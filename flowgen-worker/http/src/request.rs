@@ -133,8 +133,7 @@ impl EventHandler {
             DEFAULT_MESSAGE_SUBJECT,
             SubjectSuffix::Timestamp,
         );
-
-        // Send processor output as event.
+        // Build and send event.
         let e = EventBuilder::new()
             .data(EventData::Json(data))
             .subject(subject.clone())
