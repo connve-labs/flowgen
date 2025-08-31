@@ -52,3 +52,46 @@ pub trait ToWriter<W: Write> {
     /// Result indicating success or failure
     fn to_writer(self, writer: W) -> Result<(), Self::Error>;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_content_type_debug() {
+        let json_type = ContentType::Json;
+        assert_eq!(format!("{json_type:?}"), "Json");
+
+        let csv_type = ContentType::Csv {
+            batch_size: 100,
+            has_header: true,
+        };
+        assert_eq!(
+            format!("{csv_type:?}"),
+            "Csv { batch_size: 100, has_header: true }"
+        );
+
+        let avro_type = ContentType::Avro;
+        assert_eq!(format!("{avro_type:?}"), "Avro");
+    }
+
+    #[test]
+    fn test_content_type_clone() {
+        let csv_type = ContentType::Csv {
+            batch_size: 50,
+            has_header: false,
+        };
+        let cloned = csv_type.clone();
+
+        match cloned {
+            ContentType::Csv {
+                batch_size,
+                has_header,
+            } => {
+                assert_eq!(batch_size, 50);
+                assert!(!has_header);
+            }
+            _ => panic!("Clone should preserve variant"),
+        }
+    }
+}

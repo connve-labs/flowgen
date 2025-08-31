@@ -10,7 +10,7 @@
 pub trait Runner {
     /// Error type for task execution failures.
     type Error;
-    
+
     /// Executes the task until completion or error.
     ///
     /// # Returns

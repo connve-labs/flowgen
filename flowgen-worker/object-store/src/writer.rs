@@ -92,10 +92,9 @@ impl EventHandler {
         let put_result = context.object_store.put(&object_path, payload).await?;
 
         // Generate event subject.
-        let base_subject = format!("{DEFAULT_MESSAGE_SUBJECT}.{filename}");
         let subject = generate_subject(
             self.config.label.as_deref(),
-            &base_subject,
+            DEFAULT_MESSAGE_SUBJECT,
             SubjectSuffix::Timestamp,
         );
 

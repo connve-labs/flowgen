@@ -81,3 +81,72 @@ impl ServiceBuilder {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_service_builder_new() {
+        let builder = ServiceBuilder::new();
+        assert!(builder.endpoint.is_none());
+    }
+
+    #[test]
+    fn test_service_builder_endpoint() {
+        let mut builder = ServiceBuilder::new();
+        builder.endpoint("https://api.example.com".to_string());
+        assert_eq!(
+            builder.endpoint,
+            Some("https://api.example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_service_builder_build() {
+        let mut builder = ServiceBuilder::new();
+        builder.endpoint("https://test.com".to_string());
+
+        let service = builder.build().unwrap();
+        assert_eq!(service.endpoint, Some("https://test.com".to_string()));
+        assert!(service.channel.is_none());
+    }
+
+    #[test]
+    fn test_service_build_without_endpoint() {
+        let mut builder = ServiceBuilder::new();
+        let service = builder.build().unwrap();
+        assert!(service.endpoint.is_none());
+        assert!(service.channel.is_none());
+    }
+
+    #[test]
+    fn test_service_default_values() {
+        let service = Service {
+            endpoint: None,
+            channel: None,
+        };
+
+        assert!(service.endpoint.is_none());
+        assert!(service.channel.is_none());
+    }
+
+    #[test]
+    fn test_service_with_endpoint() {
+        let service = Service {
+            endpoint: Some("https://example.com".to_string()),
+            channel: None,
+        };
+
+        assert_eq!(service.endpoint, Some("https://example.com".to_string()));
+        assert!(service.channel.is_none());
+    }
+
+    #[test]
+    fn test_error_display() {
+        let missing_endpoint_error = Error::MissingEndpoint();
+        assert!(missing_endpoint_error
+            .to_string()
+            .contains("error that originate from the client or server"));
+    }
+}

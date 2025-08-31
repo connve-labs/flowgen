@@ -282,3 +282,134 @@ impl<W: Write> ToWriter<W> for EventData {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::io::Cursor;
+
+    #[test]
+    fn test_generate_subject_with_label() {
+        let subject = generate_subject(
+            Some("TestLabel"),
+            "base.subject",
+            SubjectSuffix::Id("123"),
+        );
+        assert_eq!(subject, "testlabel.123");
+    }
+
+    #[test]
+    fn test_generate_subject_without_label() {
+        let subject = generate_subject(
+            None,
+            "base.subject",
+            SubjectSuffix::Id("456"),
+        );
+        assert_eq!(subject, "base.subject.456");
+    }
+
+    #[test]
+    fn test_generate_subject_with_timestamp() {
+        let subject = generate_subject(
+            Some("Label"),
+            "base.subject",
+            SubjectSuffix::Timestamp,
+        );
+        assert!(subject.starts_with("label."));
+        assert!(subject.len() > "label.".len());
+    }
+
+    #[test]
+    fn test_event_builder_success() {
+        let event = EventBuilder::new()
+            .data(EventData::Json(json!({"test": "value"})))
+            .subject("test.subject".to_string())
+            .id("test-id".to_string())
+            .current_task_id(1)
+            .build()
+            .unwrap();
+
+        assert_eq!(event.subject, "test.subject");
+        assert_eq!(event.id, Some("test-id".to_string()));
+        assert_eq!(event.current_task_id, Some(1));
+        assert!(event.timestamp > 0);
+        
+        match event.data {
+            EventData::Json(value) => assert_eq!(value, json!({"test": "value"})),
+            _ => panic!("Expected JSON data"),
+        }
+    }
+
+    #[test]
+    fn test_event_builder_missing_data() {
+        let result = EventBuilder::new()
+            .subject("test.subject".to_string())
+            .build();
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("missing required attribute: data"));
+    }
+
+    #[test]
+    fn test_event_builder_missing_subject() {
+        let result = EventBuilder::new()
+            .data(EventData::Json(json!({"test": "value"})))
+            .build();
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("missing required attribute: subject"));
+    }
+
+    #[test]
+    fn test_avro_data_serialization() {
+        let avro_data = AvroData {
+            schema: r#"{"type": "string"}"#.to_string(),
+            raw_bytes: vec![1, 2, 3, 4],
+        };
+
+        let serialized = serde_json::to_string(&avro_data).unwrap();
+        let deserialized: AvroData = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(avro_data.schema, deserialized.schema);
+        assert_eq!(avro_data.raw_bytes, deserialized.raw_bytes);
+    }
+
+    #[test]
+    fn test_event_data_json_conversion() {
+        let json_data = json!({"field": "value", "number": 42});
+        let event_data = EventData::Json(json_data.clone());
+        
+        let converted = Value::try_from(&event_data).unwrap();
+        assert_eq!(converted, json_data);
+    }
+
+    #[test]
+    fn test_event_data_json_to_writer() {
+        let json_data = json!({"test": "data"});
+        let event_data = EventData::Json(json_data);
+        
+        let mut buffer = Vec::new();
+        event_data.to_writer(&mut buffer).unwrap();
+        
+        let result: serde_json::Value = serde_json::from_slice(&buffer).unwrap();
+        assert_eq!(result, json!({"test": "data"}));
+    }
+
+    #[test]
+    fn test_event_data_from_json_reader() {
+        let json_content = r#"{"name": "test", "value": 123}"#;
+        let cursor = Cursor::new(json_content);
+        
+        let events = EventData::from_reader(cursor, ContentType::Json).unwrap();
+        assert_eq!(events.len(), 1);
+        
+        match &events[0] {
+            EventData::Json(value) => {
+                assert_eq!(value["name"], "test");
+                assert_eq!(value["value"], 123);
+            }
+            _ => panic!("Expected JSON event data"),
+        }
+    }
+}

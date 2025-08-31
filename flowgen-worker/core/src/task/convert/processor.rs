@@ -127,6 +127,7 @@ impl EventHandler {
 }
 
 /// Event format conversion processor that transforms data between formats.
+#[derive(Debug)]
 pub struct Processor {
     /// Conversion task configuration.
     config: Arc<super::config::Processor>,
@@ -244,5 +245,181 @@ impl ProcessorBuilder {
                 .ok_or_else(|| Error::MissingRequiredAttribute("sender".to_string()))?,
             current_task_id: self.current_task_id,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use tokio::sync::broadcast;
+
+    #[test]
+    fn test_transform_keys() {
+        let mut value = json!({
+            "normal-key": "value1",
+            "another_key": "value2",
+            "nested": {
+                "inner-key": "nested_value"
+            }
+        });
+
+        transform_keys(&mut value);
+
+        assert_eq!(value["normal_key"], "value1");
+        assert_eq!(value["another_key"], "value2");
+
+        assert_eq!(value["nested"]["inner-key"], "nested_value");
+    }
+
+    #[test]
+    fn test_transform_keys_no_hyphens() {
+        let mut value = json!({
+            "normal_key": "value1",
+            "another_key": "value2"
+        });
+
+        let original = value.clone();
+        transform_keys(&mut value);
+
+        assert_eq!(value, original);
+    }
+
+    #[test]
+    fn test_processor_builder_new() {
+        let builder = ProcessorBuilder::new();
+        assert!(builder.config.is_none());
+        assert!(builder.tx.is_none());
+        assert!(builder.rx.is_none());
+        assert_eq!(builder.current_task_id, 0);
+    }
+
+    #[tokio::test]
+    async fn test_processor_builder_build_success() {
+        let config = Arc::new(crate::task::convert::config::Processor {
+            label: Some("test".to_string()),
+            target_format: crate::task::convert::config::TargetFormat::Avro,
+            schema: Some(r#"{"type": "string"}"#.to_string()),
+        });
+
+        let (tx, _rx) = broadcast::channel(100);
+        let rx2 = tx.subscribe();
+
+        let processor = ProcessorBuilder::new()
+            .config(config)
+            .sender(tx)
+            .receiver(rx2)
+            .current_task_id(1)
+            .build()
+            .await
+            .unwrap();
+
+        assert_eq!(processor.current_task_id, 1);
+    }
+
+    #[tokio::test]
+    async fn test_processor_builder_missing_config() {
+        let (tx, rx) = broadcast::channel(100);
+
+        let result = ProcessorBuilder::new()
+            .sender(tx)
+            .receiver(rx)
+            .build()
+            .await;
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("missing required attribute: config"));
+    }
+
+    #[tokio::test]
+    async fn test_processor_builder_missing_sender() {
+        let config = Arc::new(crate::task::convert::config::Processor::default());
+        let (_, rx) = broadcast::channel(100);
+
+        let result = ProcessorBuilder::new()
+            .config(config)
+            .receiver(rx)
+            .build()
+            .await;
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("missing required attribute: sender"));
+    }
+
+    #[tokio::test]
+    async fn test_processor_builder_missing_receiver() {
+        let config = Arc::new(crate::task::convert::config::Processor::default());
+        let (tx, _) = broadcast::channel(100);
+
+        let result = ProcessorBuilder::new()
+            .config(config)
+            .sender(tx)
+            .build()
+            .await;
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("missing required attribute: receiver"));
+    }
+
+    #[test]
+    fn test_avro_serializer_options_creation() {
+        let options = AvroSerializerOptions {
+            schema_string: r#"{"type": "string"}"#.to_string(),
+            serializer_config: Mutex::new(serde_avro_fast::ser::SerializerConfig::new(Box::leak(
+                Box::new(r#"{"type": "string"}"#.parse().unwrap()),
+            ))),
+        };
+
+        assert_eq!(options.schema_string, r#"{"type": "string"}"#);
+    }
+
+    #[tokio::test]
+    async fn test_event_handler_json_passthrough() {
+        let config = Arc::new(crate::task::convert::config::Processor {
+            label: Some("test".to_string()),
+            target_format: crate::task::convert::config::TargetFormat::Avro,
+            schema: None, // No schema means no conversion
+        });
+
+        let (tx, mut rx) = broadcast::channel(100);
+
+        let event_handler = EventHandler {
+            config,
+            tx,
+            current_task_id: 1,
+            serializer: None,
+        };
+
+        let input_event = Event {
+            data: EventData::Json(json!({"test": "value"})),
+            subject: "input.subject".to_string(),
+            current_task_id: Some(0),
+            id: None,
+            timestamp: 123456789,
+        };
+
+        tokio::spawn(async move {
+            let _ = event_handler.handle(input_event).await;
+        });
+
+        let output_event = rx.recv().await.unwrap();
+
+        match output_event.data {
+            EventData::Json(value) => {
+                assert_eq!(value, json!({"test": "value"}));
+            }
+            _ => panic!("Expected JSON passthrough"),
+        }
+        assert!(output_event.subject.starts_with("test."));
+        assert_eq!(output_event.current_task_id, Some(1));
     }
 }

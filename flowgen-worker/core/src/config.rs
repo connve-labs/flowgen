@@ -45,3 +45,92 @@ pub trait ConfigExt {
         Ok(result)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::{Deserialize, Serialize};
+    use serde_json::json;
+
+    #[derive(Serialize, Deserialize, PartialEq, Debug)]
+    struct TestConfig {
+        name: String,
+        value: i32,
+        url: String,
+    }
+
+    impl ConfigExt for TestConfig {}
+
+    #[test]
+    fn test_config_render_with_variables() {
+        let config = TestConfig {
+            name: "{{user_name}}".to_string(),
+            value: 42,
+            url: "https://{{domain}}/api".to_string(),
+        };
+
+        let data = json!({
+            "user_name": "john",
+            "domain": "example.com"
+        });
+
+        let rendered = config.render(&data).unwrap();
+
+        assert_eq!(rendered.name, "john");
+        assert_eq!(rendered.value, 42);
+        assert_eq!(rendered.url, "https://example.com/api");
+    }
+
+    #[test]
+    fn test_config_render_no_variables() {
+        let config = TestConfig {
+            name: "static_name".to_string(),
+            value: 100,
+            url: "https://static.com".to_string(),
+        };
+
+        let data = json!({});
+        let rendered = config.render(&data).unwrap();
+
+        assert_eq!(rendered, config);
+    }
+
+    #[test]
+    fn test_config_render_missing_variable() {
+        let config = TestConfig {
+            name: "{{missing_var}}".to_string(),
+            value: 0,
+            url: "test".to_string(),
+        };
+
+        let data = json!({});
+        let result = config.render(&data).unwrap();
+
+        assert_eq!(result.name, "");
+        assert_eq!(result.url, "test");
+    }
+
+    #[test]
+    fn test_config_render_nested_data() {
+        let config = TestConfig {
+            name: "{{user.first_name}}".to_string(),
+            value: 0,
+            url: "{{config.base_url}}/{{user.id}}".to_string(),
+        };
+
+        let data = json!({
+            "user": {
+                "first_name": "Jane",
+                "id": "123"
+            },
+            "config": {
+                "base_url": "https://api.example.com"
+            }
+        });
+
+        let rendered = config.render(&data).unwrap();
+
+        assert_eq!(rendered.name, "Jane");
+        assert_eq!(rendered.url, "https://api.example.com/123");
+    }
+}
