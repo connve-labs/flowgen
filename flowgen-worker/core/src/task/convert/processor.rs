@@ -97,12 +97,12 @@ impl EventHandler {
         // Build and send event.
         let e = EventBuilder::new()
             .data(data)
-            .subject(subject.clone())
+            .subject(subject)
             .current_task_id(self.current_task_id)
             .build()?;
 
+        e.log();
         self.tx.send(e)?;
-        event!(Level::INFO, "Event processed: {}", subject);
         Ok(())
     }
 }

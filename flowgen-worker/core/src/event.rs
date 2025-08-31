@@ -6,6 +6,7 @@ use serde::{Serialize, Serializer};
 use serde_json::{Map, Value};
 use std::io::{Read, Seek};
 use std::sync::Arc;
+use tracing::{event, Level};
 
 /// Subject suffix options for event subjects.
 pub enum SubjectSuffix<'a> {
@@ -57,6 +58,13 @@ pub struct Event {
     pub current_task_id: Option<usize>,
     pub id: Option<String>,
     pub timestamp: i64,
+}
+
+impl Event {
+    /// Logs the event processing with INFO level.
+    pub fn log(&self) {
+        event!(Level::INFO, "Event processed: {}", self.subject);
+    }
 }
 
 #[derive(Debug, Clone)]

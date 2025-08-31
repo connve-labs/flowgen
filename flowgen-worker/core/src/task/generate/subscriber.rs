@@ -2,7 +2,6 @@ use crate::event::{generate_subject, Event, EventBuilder, EventData, SubjectSuff
 use serde_json::json;
 use std::{sync::Arc, time::Duration};
 use tokio::{sync::broadcast::Sender, time};
-use tracing::{event, Level};
 
 const DEFAULT_MESSAGE_SUBJECT: &str = "generate";
 
@@ -44,12 +43,12 @@ impl crate::task::runner::Runner for Subscriber {
             // Build and send event.
             let e = EventBuilder::new()
                 .data(EventData::Json(data))
-                .subject(subject.clone())
+                .subject(subject)
                 .current_task_id(self.current_task_id)
                 .build()?;
 
+            e.log();
             self.tx.send(e)?;
-            event!(Level::INFO, "Event processed: {}", subject);
 
             match self.config.count {
                 Some(count) if count == counter => break,

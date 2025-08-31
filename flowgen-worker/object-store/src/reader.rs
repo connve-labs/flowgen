@@ -133,13 +133,13 @@ impl<T: Cache> EventHandler<T> {
 
                     // Build and send event.
                     let e = EventBuilder::new()
-                        .subject(subject.clone())
+                        .subject(subject)
                         .data(event_data)
                         .current_task_id(self.current_task_id)
                         .build()?;
 
+                    e.log();
                     self.tx.send(e)?;
-                    event!(Level::INFO, "Event processed: {}", subject);
                 }
             }
             GetResultPayload::Stream(_pin) => todo!(),

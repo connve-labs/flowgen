@@ -177,14 +177,14 @@ impl<T: Cache> EventHandler<T> {
                             // Build and send event.
                             let e = EventBuilder::new()
                                 .data(EventData::Avro(data))
-                                .subject(subject.clone())
+                                .subject(subject)
                                 .id(event.id)
                                 .current_task_id(self.current_task_id)
                                 .build()
                                 .map_err(Error::Event)?;
 
+                            e.log();
                             self.tx.send(e)?;
-                            event!(Level::INFO, "Event processed: {}", subject);
                         }
                     }
                 }
