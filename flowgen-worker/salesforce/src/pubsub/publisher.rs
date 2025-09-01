@@ -42,6 +42,7 @@ pub enum Error {
     SchemaParse(),
 }
 
+#[derive(Debug)]
 pub struct Publisher {
     config: Arc<super::config::Publisher>,
     rx: Receiver<Event>,
@@ -199,5 +200,123 @@ impl PublisherBuilder {
                 .ok_or_else(|| Error::MissingRequiredAttribute("receiver".to_string()))?,
             current_task_id: self.current_task_id,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pubsub::config;
+    use serde_json::json;
+    use tokio::sync::broadcast;
+
+    #[test]
+    fn test_publisher_builder_new() {
+        let builder = PublisherBuilder::new();
+        assert!(builder.config.is_none());
+        assert!(builder.rx.is_none());
+        assert_eq!(builder.current_task_id, 0);
+    }
+
+    #[test]
+    fn test_publisher_builder_config() {
+        let config = Arc::new(config::Publisher {
+            label: Some("test".to_string()),
+            credentials: "test_creds".to_string(),
+            topic: "/event/Test__e".to_string(),
+            payload: serde_json::Map::new(),
+            endpoint: None,
+        });
+        
+        let builder = PublisherBuilder::new().config(config.clone());
+        assert!(builder.config.is_some());
+        assert_eq!(builder.config.unwrap().topic, "/event/Test__e");
+    }
+
+    #[test]
+    fn test_publisher_builder_receiver() {
+        let (_, rx) = broadcast::channel::<Event>(10);
+        let builder = PublisherBuilder::new().receiver(rx);
+        assert!(builder.rx.is_some());
+    }
+
+    #[test]
+    fn test_publisher_builder_current_task_id() {
+        let builder = PublisherBuilder::new().current_task_id(42);
+        assert_eq!(builder.current_task_id, 42);
+    }
+
+    #[tokio::test]
+    async fn test_publisher_builder_missing_config() {
+        let (_, rx) = broadcast::channel::<Event>(10);
+        let result = PublisherBuilder::new()
+            .receiver(rx)
+            .current_task_id(1)
+            .build()
+            .await;
+        
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "config"));
+    }
+
+    #[tokio::test]
+    async fn test_publisher_builder_missing_receiver() {
+        let config = Arc::new(config::Publisher {
+            label: Some("test".to_string()),
+            credentials: "test_creds".to_string(),
+            topic: "/event/Test__e".to_string(),
+            payload: serde_json::Map::new(),
+            endpoint: None,
+        });
+
+        let result = PublisherBuilder::new()
+            .config(config)
+            .current_task_id(1)
+            .build()
+            .await;
+        
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "receiver"));
+    }
+
+    #[tokio::test]
+    async fn test_publisher_builder_build_success() {
+        let config = Arc::new(config::Publisher {
+            label: Some("test_publisher".to_string()),
+            credentials: "test_creds".to_string(),
+            topic: "/event/Test__e".to_string(),
+            payload: {
+                let mut payload = serde_json::Map::new();
+                payload.insert("Test_Field__c".to_string(), json!("test_value"));
+                payload
+            },
+            endpoint: None,
+        });
+
+        let (_, rx) = broadcast::channel::<Event>(10);
+
+        let result = PublisherBuilder::new()
+            .config(config.clone())
+            .receiver(rx)
+            .current_task_id(5)
+            .build()
+            .await;
+
+        assert!(result.is_ok());
+        let publisher = result.unwrap();
+        assert_eq!(publisher.current_task_id, 5);
+        assert_eq!(publisher.config.topic, "/event/Test__e");
+    }
+
+    #[test]
+    fn test_error_display() {
+        let err = Error::MissingRequiredAttribute("test_field".to_string());
+        assert!(err.to_string().contains("missing required event attribute: test_field"));
+
+        let err = Error::EmptyObject();
+        assert!(err.to_string().contains("empty object"));
+
+        let err = Error::SchemaParse();
+        assert!(err.to_string().contains("error parsing Schema Json"));
     }
 }

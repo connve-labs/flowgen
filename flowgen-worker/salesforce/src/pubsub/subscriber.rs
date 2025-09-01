@@ -202,6 +202,7 @@ impl<T: Cache> EventHandler<T> {
 ///
 /// Creates TopicListener instances for each configured topic,
 /// handling authentication and connection setup.
+#[derive(Debug)]
 pub struct Subscriber<T: Cache> {
     /// Configuration for topics, credentials, and consumer options
     config: Arc<super::config::Subscriber>,
@@ -339,5 +340,206 @@ where
                 .ok_or_else(|| Error::MissingRequiredAttribute("cache".to_string()))?,
             current_task_id: self.current_task_id,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pubsub::config;
+    use flowgen_core::cache::Cache;
+    use tokio::sync::broadcast;
+    
+    // Simple mock cache implementation for tests
+    #[derive(Debug, Default)]
+    struct TestCache {}
+    
+    impl TestCache {
+        fn new() -> Self {
+            Self {}
+        }
+    }
+    
+    impl Cache for TestCache {
+        type Error = String;
+        
+        async fn init(self, _bucket: &str) -> Result<Self, Self::Error> {
+            Ok(self)
+        }
+        
+        async fn put(&self, _key: &str, _value: bytes::Bytes) -> Result<(), Self::Error> {
+            Ok(())
+        }
+        
+        async fn get(&self, _key: &str) -> Result<bytes::Bytes, Self::Error> {
+            Ok(bytes::Bytes::new())
+        }
+    }
+
+    #[test]
+    fn test_subscriber_builder_new() {
+        let builder: SubscriberBuilder<TestCache> = SubscriberBuilder::new();
+        assert!(builder.config.is_none());
+        assert!(builder.tx.is_none());
+        assert!(builder.cache.is_none());
+        assert_eq!(builder.current_task_id, 0);
+    }
+
+    #[test]
+    fn test_subscriber_builder_config() {
+        let config = Arc::new(config::Subscriber {
+            label: Some("test_subscriber".to_string()),
+            credentials: "test_creds".to_string(),
+            topic: config::Topic {
+                name: "/event/Test__e".to_string(),
+                durable_consumer_options: None,
+                num_requested: Some(10),
+            },
+            endpoint: None,
+        });
+
+        let builder: SubscriberBuilder<TestCache> = SubscriberBuilder::new().config(config.clone());
+        assert!(builder.config.is_some());
+        assert_eq!(builder.config.unwrap().topic.name, "/event/Test__e");
+    }
+
+    #[test]
+    fn test_subscriber_builder_sender() {
+        let (tx, _) = broadcast::channel::<Event>(10);
+        let builder: SubscriberBuilder<TestCache> = SubscriberBuilder::new().sender(tx);
+        assert!(builder.tx.is_some());
+    }
+
+    #[test]
+    fn test_subscriber_builder_cache() {
+        let cache = std::sync::Arc::new(TestCache::new());
+        let builder = SubscriberBuilder::new().cache(cache);
+        assert!(builder.cache.is_some());
+    }
+
+    #[test]
+    fn test_subscriber_builder_current_task_id() {
+        let builder: SubscriberBuilder<TestCache> = SubscriberBuilder::new().current_task_id(99);
+        assert_eq!(builder.current_task_id, 99);
+    }
+
+    #[tokio::test]
+    async fn test_subscriber_builder_missing_config() {
+        let (tx, _) = broadcast::channel::<Event>(10);
+        let cache = std::sync::Arc::new(TestCache::new());
+
+        let result = SubscriberBuilder::<TestCache>::new()
+            .sender(tx)
+            .cache(cache)
+            .current_task_id(1)
+            .build()
+            .await;
+
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "config"));
+    }
+
+    #[tokio::test]
+    async fn test_subscriber_builder_missing_sender() {
+        let config = Arc::new(config::Subscriber {
+            label: Some("test".to_string()),
+            credentials: "test_creds".to_string(),
+            topic: config::Topic {
+                name: "/event/Test__e".to_string(),
+                durable_consumer_options: None,
+                num_requested: Some(5),
+            },
+            endpoint: None,
+        });
+
+        let cache = std::sync::Arc::new(TestCache::new());
+
+        let result = SubscriberBuilder::<TestCache>::new()
+            .config(config)
+            .cache(cache)
+            .current_task_id(1)
+            .build()
+            .await;
+
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "sender"));
+    }
+
+    #[tokio::test]
+    async fn test_subscriber_builder_missing_cache() {
+        let config = Arc::new(config::Subscriber {
+            label: Some("test".to_string()),
+            credentials: "test_creds".to_string(),
+            topic: config::Topic {
+                name: "/event/Test__e".to_string(),
+                durable_consumer_options: None,
+                num_requested: Some(25),
+            },
+            endpoint: None,
+        });
+
+        let (tx, _) = broadcast::channel::<Event>(10);
+
+        let result = SubscriberBuilder::<TestCache>::new()
+            .config(config)
+            .sender(tx)
+            .current_task_id(1)
+            .build()
+            .await;
+
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "cache"));
+    }
+
+    #[tokio::test]
+    async fn test_subscriber_builder_build_success() {
+        let config = Arc::new(config::Subscriber {
+            label: Some("complete_subscriber".to_string()),
+            credentials: "complete_creds".to_string(),
+            topic: config::Topic {
+                name: "/data/AccountChangeEvent".to_string(),
+                durable_consumer_options: Some(config::DurableConsumerOptions {
+                    enabled: true,
+                    managed_subscription: true,
+                    name: "TestConsumer".to_string(),
+                }),
+                num_requested: Some(100),
+            },
+            endpoint: Some("api.pubsub.salesforce.com:7443".to_string()),
+        });
+
+        let (tx, _) = broadcast::channel::<Event>(10);
+        let cache = std::sync::Arc::new(TestCache::new());
+
+        let result = SubscriberBuilder::<TestCache>::new()
+            .config(config.clone())
+            .sender(tx)
+            .cache(cache)
+            .current_task_id(42)
+            .build()
+            .await;
+
+        assert!(result.is_ok());
+        let subscriber = result.unwrap();
+        assert_eq!(subscriber.current_task_id, 42);
+        assert_eq!(subscriber.config.topic.name, "/data/AccountChangeEvent");
+        assert_eq!(subscriber.config.endpoint, Some("api.pubsub.salesforce.com:7443".to_string()));
+    }
+
+    #[test]
+    fn test_error_display() {
+        let err = Error::MissingRequiredAttribute("test_attr".to_string());
+        assert!(err.to_string().contains("missing required attribute: test_attr"));
+
+        let err = Error::Cache("cache failure".to_string());
+        assert!(err.to_string().contains("cache error: cache failure"));
+    }
+
+    #[test]
+    fn test_constants() {
+        assert_eq!(DEFAULT_MESSAGE_SUBJECT, "salesforce.pubsub.in");
+        assert_eq!(DEFAULT_PUBSUB_URL, "https://api.pubsub.salesforce.com");
+        assert_eq!(DEFAULT_PUBSUB_PORT, "443");
+        assert_eq!(DEFAULT_NUM_REQUESTED, 1000);
     }
 }

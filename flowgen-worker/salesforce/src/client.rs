@@ -125,7 +125,7 @@ impl Builder {
 #[cfg(test)]
 mod tests {
 
-    use std::path::PathBuf;
+    use std::env;
 
     use super::*;
 
@@ -138,8 +138,8 @@ mod tests {
     #[test]
     fn test_build_with_invalid_credentials() {
         let creds: &str = r#"{"client_id":"client_id"}"#;
-        let mut path = PathBuf::new();
-        path.push("invalid_credentials.json");
+        let mut path = env::temp_dir();
+        path.push(format!("invalid_credentials_{}.json", std::process::id()));
         let _ = fs::write(path.clone(), creds);
         let client = Builder::new().credentials_path(path.clone()).build();
         let _ = fs::remove_file(path);
@@ -155,8 +155,8 @@ mod tests {
                 "instance_url": "mydomain.salesforce.com",
                 "tenant_id": "some_tenant_id"
             }"#;
-        let mut path = PathBuf::new();
-        path.push("invalid_url_credentials.json");
+        let mut path = env::temp_dir();
+        path.push(format!("invalid_url_credentials_{}.json", std::process::id()));
         let _ = fs::write(path.clone(), creds);
         let client = Builder::new().credentials_path(path.clone()).build();
         let _ = fs::remove_file(path);
@@ -172,8 +172,8 @@ mod tests {
                 "instance_url": "https://mydomain.salesforce.com",
                 "tenant_id": "some_tenant_id"
             }"#;
-        let mut path = PathBuf::new();
-        path.push("credentials.json");
+        let mut path = env::temp_dir();
+        path.push(format!("credentials_{}.json", std::process::id()));
         let _ = fs::write(path.clone(), creds);
         let client = Builder::new().credentials_path(path.clone()).build();
         let _ = fs::remove_file(path);

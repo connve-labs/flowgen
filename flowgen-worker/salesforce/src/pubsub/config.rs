@@ -301,3 +301,132 @@ pub struct DurableConsumerOptions {
 }
 
 impl ConfigExt for Publisher {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_subscriber_config_default() {
+        let subscriber = Subscriber::default();
+        assert_eq!(subscriber.label, None);
+        assert_eq!(subscriber.credentials, "");
+        assert_eq!(subscriber.topic, Topic::default());
+        assert_eq!(subscriber.endpoint, None);
+    }
+
+    #[test]
+    fn test_subscriber_config_serialization() {
+        let subscriber = Subscriber {
+            label: Some("test_subscriber".to_string()),
+            credentials: "test_creds".to_string(),
+            topic: Topic {
+                name: "/event/Test__e".to_string(),
+                durable_consumer_options: Some(DurableConsumerOptions {
+                    enabled: true,
+                    managed_subscription: false,
+                    name: "TestConsumer".to_string(),
+                }),
+                num_requested: Some(50),
+            },
+            endpoint: Some("api.pubsub.salesforce.com:7443".to_string()),
+        };
+
+        let json = serde_json::to_string(&subscriber).unwrap();
+        let deserialized: Subscriber = serde_json::from_str(&json).unwrap();
+        assert_eq!(subscriber, deserialized);
+    }
+
+    #[test]
+    fn test_topic_config_default() {
+        let topic = Topic::default();
+        assert_eq!(topic.name, "");
+        assert_eq!(topic.durable_consumer_options, None);
+        assert_eq!(topic.num_requested, None);
+    }
+
+    #[test]
+    fn test_topic_config_creation() {
+        let topic = Topic {
+            name: "/data/AccountChangeEvent".to_string(),
+            durable_consumer_options: Some(DurableConsumerOptions {
+                enabled: true,
+                managed_subscription: true,
+                name: "AccountProcessor".to_string(),
+            }),
+            num_requested: Some(100),
+        };
+
+        assert_eq!(topic.name, "/data/AccountChangeEvent");
+        assert!(topic.durable_consumer_options.is_some());
+        assert_eq!(topic.num_requested, Some(100));
+    }
+
+    #[test]
+    fn test_publisher_config_default() {
+        let publisher = Publisher::default();
+        assert_eq!(publisher.label, None);
+        assert_eq!(publisher.credentials, "");
+        assert_eq!(publisher.topic, "");
+        assert!(publisher.payload.is_empty());
+        assert_eq!(publisher.endpoint, None);
+    }
+
+    #[test]
+    fn test_publisher_config_serialization() {
+        let mut payload = Map::new();
+        payload.insert("Order_ID__c".to_string(), json!("ORD-12345"));
+        payload.insert("Status__c".to_string(), json!("Shipped"));
+        
+        let publisher = Publisher {
+            label: Some("order_publisher".to_string()),
+            credentials: "sf_creds".to_string(),
+            topic: "/event/Order_Status__e".to_string(),
+            payload,
+            endpoint: Some("api.pubsub.salesforce.com:7443".to_string()),
+        };
+
+        let json = serde_json::to_string(&publisher).unwrap();
+        let deserialized: Publisher = serde_json::from_str(&json).unwrap();
+        assert_eq!(publisher, deserialized);
+    }
+
+    #[test]
+    fn test_durable_consumer_options_default() {
+        let options = DurableConsumerOptions::default();
+        assert!(!options.enabled);
+        assert!(!options.managed_subscription);
+        assert_eq!(options.name, "");
+    }
+
+    #[test]
+    fn test_durable_consumer_options_creation() {
+        let options = DurableConsumerOptions {
+            enabled: true,
+            managed_subscription: true,
+            name: "TestDurableConsumer".to_string(),
+        };
+
+        assert!(options.enabled);
+        assert!(options.managed_subscription);
+        assert_eq!(options.name, "TestDurableConsumer");
+    }
+
+    #[test]
+    fn test_config_clone() {
+        let subscriber = Subscriber {
+            label: Some("clone_test".to_string()),
+            credentials: "creds".to_string(),
+            topic: Topic {
+                name: "/event/Clone__e".to_string(),
+                durable_consumer_options: None,
+                num_requested: Some(10),
+            },
+            endpoint: None,
+        };
+
+        let cloned = subscriber.clone();
+        assert_eq!(subscriber, cloned);
+    }
+}
