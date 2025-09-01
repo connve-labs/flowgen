@@ -34,11 +34,11 @@ pub enum Error {
     Event(#[from] flowgen_core::event::Error),
     #[error(transparent)]
     Service(#[from] flowgen_core::service::Error),
-    #[error("missing required event attribute: {}", _0)]
+    #[error("Missing required event attribute: {}.", _0)]
     MissingRequiredAttribute(String),
-    #[error("empty object")]
+    #[error("Empty object.")]
     EmptyObject(),
-    #[error("error parsing Schema Json string to Schema type")]
+    #[error("Error parsing Schema Json string to Schema type.")]
     SchemaParse(),
 }
 
@@ -227,7 +227,7 @@ mod tests {
             payload: serde_json::Map::new(),
             endpoint: None,
         });
-        
+
         let builder = PublisherBuilder::new().config(config.clone());
         assert!(builder.config.is_some());
         assert_eq!(builder.config.unwrap().topic, "/event/Test__e");
@@ -254,9 +254,11 @@ mod tests {
             .current_task_id(1)
             .build()
             .await;
-        
+
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "config"));
+        assert!(
+            matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "config")
+        );
     }
 
     #[tokio::test]
@@ -274,9 +276,11 @@ mod tests {
             .current_task_id(1)
             .build()
             .await;
-        
+
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "receiver"));
+        assert!(
+            matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "receiver")
+        );
     }
 
     #[tokio::test]
@@ -311,7 +315,9 @@ mod tests {
     #[test]
     fn test_error_display() {
         let err = Error::MissingRequiredAttribute("test_field".to_string());
-        assert!(err.to_string().contains("missing required event attribute: test_field"));
+        assert!(err
+            .to_string()
+            .contains("missing required event attribute: test_field"));
 
         let err = Error::EmptyObject();
         assert!(err.to_string().contains("empty object"));

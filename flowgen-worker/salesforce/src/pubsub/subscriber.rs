@@ -1,7 +1,10 @@
 use flowgen_core::{
     cache::Cache,
     client::Client,
-    event::{generate_subject, AvroData, Event, EventBuilder, EventData, SubjectSuffix, DEFAULT_LOG_MESSAGE},
+    event::{
+        generate_subject, AvroData, Event, EventBuilder, EventData, SubjectSuffix,
+        DEFAULT_LOG_MESSAGE,
+    },
 };
 use salesforce_pubsub::eventbus::v1::{FetchRequest, SchemaRequest, TopicRequest};
 use std::sync::Arc;
@@ -31,9 +34,9 @@ pub enum Error {
     Bincode(#[from] bincode::Error),
     #[error(transparent)]
     Service(#[from] flowgen_core::service::Error),
-    #[error("missing required attribute: {}", _0)]
+    #[error("Missing required attribute: {}.", _0)]
     MissingRequiredAttribute(String),
-    #[error("cache error: {0}")]
+    #[error("Cache error: {0}.")]
     Cache(String),
     #[error(transparent)]
     Serde(#[from] serde_json::Error),
@@ -189,7 +192,9 @@ impl<T: Cache> EventHandler<T> {
                     }
                 }
                 Err(e) => {
-                    return Err(Error::SalesforcePubSub(super::context::Error::Tonic(Box::new(e))));
+                    return Err(Error::SalesforcePubSub(super::context::Error::Tonic(
+                        Box::new(e),
+                    )));
                 }
             }
         }
@@ -349,28 +354,28 @@ mod tests {
     use crate::pubsub::config;
     use flowgen_core::cache::Cache;
     use tokio::sync::broadcast;
-    
+
     // Simple mock cache implementation for tests
     #[derive(Debug, Default)]
     struct TestCache {}
-    
+
     impl TestCache {
         fn new() -> Self {
             Self {}
         }
     }
-    
+
     impl Cache for TestCache {
         type Error = String;
-        
+
         async fn init(self, _bucket: &str) -> Result<Self, Self::Error> {
             Ok(self)
         }
-        
+
         async fn put(&self, _key: &str, _value: bytes::Bytes) -> Result<(), Self::Error> {
             Ok(())
         }
-        
+
         async fn get(&self, _key: &str) -> Result<bytes::Bytes, Self::Error> {
             Ok(bytes::Bytes::new())
         }
@@ -436,7 +441,9 @@ mod tests {
             .await;
 
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "config"));
+        assert!(
+            matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "config")
+        );
     }
 
     #[tokio::test]
@@ -462,7 +469,9 @@ mod tests {
             .await;
 
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "sender"));
+        assert!(
+            matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "sender")
+        );
     }
 
     #[tokio::test]
@@ -488,7 +497,9 @@ mod tests {
             .await;
 
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "cache"));
+        assert!(
+            matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "cache")
+        );
     }
 
     #[tokio::test]
@@ -523,13 +534,18 @@ mod tests {
         let subscriber = result.unwrap();
         assert_eq!(subscriber.current_task_id, 42);
         assert_eq!(subscriber.config.topic.name, "/data/AccountChangeEvent");
-        assert_eq!(subscriber.config.endpoint, Some("api.pubsub.salesforce.com:7443".to_string()));
+        assert_eq!(
+            subscriber.config.endpoint,
+            Some("api.pubsub.salesforce.com:7443".to_string())
+        );
     }
 
     #[test]
     fn test_error_display() {
         let err = Error::MissingRequiredAttribute("test_attr".to_string());
-        assert!(err.to_string().contains("missing required attribute: test_attr"));
+        assert!(err
+            .to_string()
+            .contains("missing required attribute: test_attr"));
 
         let err = Error::Cache("cache failure".to_string());
         assert!(err.to_string().contains("cache error: cache failure"));

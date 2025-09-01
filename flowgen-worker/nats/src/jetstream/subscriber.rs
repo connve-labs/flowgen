@@ -1,6 +1,9 @@
 use super::message::NatsMessageExt;
 use async_nats::jetstream::{self};
-use flowgen_core::{client::Client, event::{Event, DEFAULT_LOG_MESSAGE}};
+use flowgen_core::{
+    client::Client,
+    event::{Event, DEFAULT_LOG_MESSAGE},
+};
 use std::{sync::Arc, time::Duration};
 use tokio::{sync::broadcast::Sender, time};
 use tokio_stream::StreamExt;
@@ -19,14 +22,24 @@ pub enum Error {
     #[error(transparent)]
     NatsJetStreamGetStream(#[from] async_nats::jetstream::context::GetStreamError),
     #[error(transparent)]
-    NatsSubscribe(#[from] async_nats::SubscribeError),
+    NatsJetStreamStreamInfo(#[from] async_nats::jetstream::stream::InfoError),
+    #[error("Consumer configuration check failed.")]
+    ConsumerInfoFailed,
+    #[error("Consumer '{consumer}' exists with different filter subject '{existing}', expected '{expected}'. Please delete the existing consumer or use a different durable name.")]
+    ConsumerFilterMismatch {
+        consumer: String,
+        existing: String,
+        expected: String,
+    },
+    #[error(transparent)]
+    Subscribe(#[from] async_nats::SubscribeError),
     #[error(transparent)]
     TaskJoin(#[from] tokio::task::JoinError),
     #[error(transparent)]
     SendMessage(#[from] tokio::sync::broadcast::error::SendError<Event>),
-    #[error("missing required attribute: {}", _0)]
+    #[error("Missing required attribute: {}.", _0)]
     MissingRequiredAttribute(String),
-    #[error("other error with subscriber")]
+    #[error("Other error with subscriber.")]
     Other(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
@@ -47,18 +60,31 @@ impl flowgen_core::task::runner::Runner for Subscriber {
             .await?;
 
         if let Some(jetstream) = client.jetstream {
-            let consumer = jetstream
-                .get_stream(self.config.stream.clone())
-                .await?
-                .get_or_create_consumer(
-                    &self.config.durable_name,
-                    jetstream::consumer::pull::Config {
-                        durable_name: Some(self.config.durable_name.clone()),
-                        filter_subject: self.config.subject.clone(),
-                        ..Default::default()
-                    },
-                )
-                .await?;
+            let stream = jetstream.get_stream(self.config.stream.clone()).await?;
+
+            let consumer_config = jetstream::consumer::pull::Config {
+                durable_name: Some(self.config.durable_name.clone()),
+                filter_subject: self.config.subject.clone(),
+                ..Default::default()
+            };
+
+            let consumer = match stream.get_consumer(&self.config.durable_name).await {
+                Ok(mut existing_consumer) => {
+                    let consumer_info = existing_consumer.info().await?;
+                    let current_filter = consumer_info.config.filter_subject.clone();
+
+                    if current_filter != self.config.subject {
+                        return Err(Error::ConsumerFilterMismatch {
+                            consumer: self.config.durable_name.clone(),
+                            existing: current_filter,
+                            expected: self.config.subject.clone(),
+                        });
+                    } else {
+                        existing_consumer
+                    }
+                }
+                Err(_) => stream.create_consumer(consumer_config).await?,
+            };
 
             loop {
                 if let Some(delay_secs) = self.config.delay_secs {
@@ -134,9 +160,14 @@ mod tests {
     #[test]
     fn test_error_display() {
         let err = Error::MissingRequiredAttribute("test_field".to_string());
-        assert!(err.to_string().contains("missing required attribute: test_field"));
+        assert!(err
+            .to_string()
+            .contains("missing required attribute: test_field"));
 
-        let err = Error::Other(Box::new(std::io::Error::new(std::io::ErrorKind::NotFound, "test error")));
+        let err = Error::Other(Box::new(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "test error",
+        )));
         assert!(err.to_string().contains("other error with subscriber"));
     }
 
@@ -194,7 +225,9 @@ mod tests {
             .await;
 
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "config"));
+        assert!(
+            matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "config")
+        );
     }
 
     #[tokio::test]
@@ -215,7 +248,9 @@ mod tests {
             .await;
 
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "sender"));
+        assert!(
+            matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "sender")
+        );
     }
 
     #[tokio::test]
@@ -287,5 +322,41 @@ mod tests {
 
         assert_eq!(subscriber.config, config);
         assert_eq!(subscriber.current_task_id, 0);
+    }
+
+    #[test]
+    fn test_error_variants_added_for_consumer_management() {
+        // Test that new error variants for consumer operations exist
+        let consumer_err = Error::MissingRequiredAttribute("test".to_string());
+        assert!(consumer_err
+            .to_string()
+            .contains("missing required attribute"));
+
+        // Test error display for comprehensive coverage
+        let other_err = Error::Other(Box::new(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "test",
+        )));
+        assert!(other_err
+            .to_string()
+            .contains("other error with subscriber"));
+
+        // Test consumer filter mismatch error
+        let filter_err = Error::ConsumerFilterMismatch {
+            consumer: "test_consumer".to_string(),
+            existing: "old.subject".to_string(),
+            expected: "new.subject".to_string(),
+        };
+        let err_msg = filter_err.to_string();
+        assert!(err_msg.contains("test_consumer"));
+        assert!(err_msg.contains("old.subject"));
+        assert!(err_msg.contains("new.subject"));
+        assert!(err_msg.contains("Please delete the existing consumer"));
+
+        // Test consumer info failed error
+        let info_err = Error::ConsumerInfoFailed;
+        assert!(info_err
+            .to_string()
+            .contains("consumer configuration check failed"));
     }
 }

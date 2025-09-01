@@ -8,12 +8,16 @@ use tracing::{event, Level};
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
 pub enum Error {
+    /// File system error occurred while globbing flow configuration files.
     #[error(transparent)]
     Glob(#[from] glob::GlobError),
+    /// Invalid glob pattern provided for flow discovery.
     #[error(transparent)]
     Pattern(#[from] glob::PatternError),
+    /// Configuration parsing or deserialization error.
     #[error(transparent)]
     Config(#[from] config::ConfigError),
+    /// Flow directory path is invalid or cannot be converted to string.
     #[error("Invalid path")]
     InvalidPath,
 }
@@ -24,7 +28,11 @@ pub struct App {
 }
 
 impl flowgen_core::task::runner::Runner for App {
-    /// Loads flow configs, registers routes, starts server, then runs tasks.
+    /// Loads flow configurations from disk, builds flows, starts HTTP server, and runs all tasks concurrently.
+    ///
+    /// This method discovers flow configuration files using the glob pattern specified in the app config,
+    /// parses each configuration file, builds flow instances, registers HTTP routes, starts the HTTP server,
+    /// and finally runs all flow tasks concurrently along with the server.
     type Error = Error;
     async fn run(self) -> Result<(), Error> {
         let app_config = Arc::new(self.config);

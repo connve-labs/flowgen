@@ -112,7 +112,7 @@ mod tests {
             "test": "value",
             "number": 42
         });
-        
+
         let event = EventBuilder::new()
             .subject("test.subject".to_string())
             .id("test-id-123".to_string())
@@ -122,7 +122,7 @@ mod tests {
 
         let result = event.to_publish();
         assert!(result.is_ok());
-        
+
         // We can't easily verify the contents without accessing private fields,
         // but we can verify the conversion succeeds
     }
@@ -133,7 +133,7 @@ mod tests {
             schema: "test_schema".to_string(),
             raw_bytes: vec![1, 2, 3, 4],
         };
-        
+
         let event = EventBuilder::new()
             .subject("avro.test".to_string())
             .data(EventData::Avro(avro_data))
@@ -147,7 +147,7 @@ mod tests {
     #[test]
     fn test_flowgen_message_ext_no_id() {
         let json_data = json!({"test": "no_id"});
-        
+
         let event = EventBuilder::new()
             .subject("test.no.id".to_string())
             .data(EventData::Json(json_data))
@@ -161,7 +161,7 @@ mod tests {
     #[test]
     fn test_nats_message_ext_json() {
         let json_payload = serde_json::to_vec(&json!({"message": "test"})).unwrap();
-        
+
         // Create a mock NATS message
         let message = async_nats::Message {
             subject: "test.subject".into(),
@@ -175,11 +175,11 @@ mod tests {
 
         let result = message.to_event();
         assert!(result.is_ok());
-        
+
         let event = result.unwrap();
         assert_eq!(event.subject, "test.subject");
         assert!(event.id.is_none()); // No headers provided
-        
+
         // Verify the data is JSON type
         assert!(matches!(event.data, EventData::Json(_)));
     }
@@ -187,10 +187,10 @@ mod tests {
     #[test]
     fn test_nats_message_ext_with_headers() {
         let json_payload = serde_json::to_vec(&json!({"with": "headers"})).unwrap();
-        
+
         let mut headers = HeaderMap::new();
         headers.insert(async_nats::header::NATS_MESSAGE_ID, "msg-123");
-        
+
         let message = async_nats::Message {
             subject: "test.headers".into(),
             payload: json_payload.into(),
@@ -203,7 +203,7 @@ mod tests {
 
         let result = message.to_event();
         assert!(result.is_ok());
-        
+
         let event = result.unwrap();
         assert_eq!(event.subject, "test.headers");
         assert_eq!(event.id, Some("msg-123".to_string()));
@@ -215,9 +215,9 @@ mod tests {
             schema: "test_avro_schema".to_string(),
             raw_bytes: vec![5, 6, 7, 8],
         };
-        
+
         let serialized = serialize(&avro_data).unwrap();
-        
+
         let message = async_nats::Message {
             subject: "avro.test".into(),
             payload: serialized.into(),
@@ -230,7 +230,7 @@ mod tests {
 
         let result = message.to_event();
         assert!(result.is_ok());
-        
+
         let event = result.unwrap();
         assert_eq!(event.subject, "avro.test");
         assert!(matches!(event.data, EventData::Avro(_)));
@@ -248,7 +248,7 @@ mod tests {
             .data(EventData::Json(json_data))
             .build()
             .unwrap();
-        
+
         accepts_flowgen_message_ext(event);
 
         let message = async_nats::Message {
