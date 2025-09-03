@@ -16,10 +16,16 @@ jobs:
       with:
         toolchain: stable
         override: true
-    - name: Make scripts executable
-      run: chmod +x ./scripts/*.sh
-    - name: Build and test
-      run: sudo ./scripts/build.sh
+    - name: Install system dependencies
+      run: |
+        sudo apt update -qq
+        sudo apt-get -qq install pkg-config libssl-dev protobuf-compiler git
+    - name: Add rustfmt and build
+      run: |
+        rustup component add rustfmt
+        cargo build --verbose
+        cargo test --verbose
+        cargo fmt --all
 
   test-rust-nightly:
     runs-on: ubuntu-latest
@@ -32,10 +38,16 @@ jobs:
       with:
         toolchain: nightly
         override: true
-    - name: Make scripts executable
-      run: chmod +x ./scripts/*.sh
-    - name: Build and test
-      run: sudo ./scripts/build.sh
+    - name: Install system dependencies
+      run: |
+        sudo apt update -qq
+        sudo apt-get -qq install pkg-config libssl-dev protobuf-compiler git
+    - name: Add rustfmt and build
+      run: |
+        rustup component add rustfmt
+        cargo build --verbose
+        cargo test --verbose
+        cargo fmt --all
 
   build-and-push:
     runs-on: ubuntu-latest
