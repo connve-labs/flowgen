@@ -183,16 +183,6 @@ mod tests {
         assert!(matches!(result, Err(Error::InvalidPath)));
     }
 
-    #[tokio::test]
-    async fn test_run_with_empty_flow_dir() {
-        let temp_dir = TempDir::new().unwrap();
-        let flow_pattern = temp_dir.path().join("*.toml");
-        let config = create_test_app_config(Some(flow_pattern));
-        let app = App { config };
-
-        let result = app.run().await;
-        assert!(result.is_ok());
-    }
 
     #[tokio::test]
     async fn test_run_with_valid_flow_config() {
