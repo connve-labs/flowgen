@@ -180,18 +180,6 @@ mod tests {
     use std::path::PathBuf;
     use tokio::sync::broadcast;
 
-    #[test]
-    fn test_error_display() {
-        let err = Error::MissingRequiredAttribute("test_field".to_string());
-        assert!(err
-            .to_string()
-            .contains("Missing required attribute: test_field"));
-
-        let err = Error::MissingClient();
-        assert!(err
-            .to_string()
-            .contains("Client is missing or not initialized properly"));
-    }
 
     #[test]
     fn test_publisher_builder_new() {

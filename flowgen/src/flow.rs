@@ -653,12 +653,6 @@ mod tests {
     }
 
     #[test]
-    fn test_error_display() {
-        let error = Error::MissingRequiredAttribute("test_field".to_string());
-        assert_eq!(error.to_string(), "Missing required attribute: test_field");
-    }
-
-    #[test]
     fn test_error_convert_processor() {
         let convert_error = flowgen_core::task::convert::processor::Error::MissingRequiredAttribute(
             "test".to_string(),

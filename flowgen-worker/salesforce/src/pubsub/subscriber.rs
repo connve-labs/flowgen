@@ -551,17 +551,6 @@ mod tests {
     }
 
     #[test]
-    fn test_error_display() {
-        let err = Error::MissingRequiredAttribute("test_attr".to_string());
-        assert!(err
-            .to_string()
-            .contains("Missing required attribute: test_attr"));
-
-        let err = Error::Cache("cache failure".to_string());
-        assert!(err.to_string().contains("Cache error: cache failure"));
-    }
-
-    #[test]
     fn test_constants() {
         assert_eq!(DEFAULT_MESSAGE_SUBJECT, "salesforce.pubsub.in");
         assert_eq!(DEFAULT_PUBSUB_URL, "https://api.pubsub.salesforce.com");

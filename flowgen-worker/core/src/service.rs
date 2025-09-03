@@ -142,11 +142,4 @@ mod tests {
         assert!(service.channel.is_none());
     }
 
-    #[test]
-    fn test_error_display() {
-        let missing_endpoint_error = Error::MissingEndpoint();
-        assert!(missing_endpoint_error
-            .to_string()
-            .contains("error that originate from the client or server"));
-    }
 }

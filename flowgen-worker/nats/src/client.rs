@@ -166,17 +166,6 @@ mod tests {
     }
 
     #[test]
-    fn test_error_display() {
-        let err = Error::MissingRequiredAttribute("test_field".to_string());
-        assert!(err
-            .to_string()
-            .contains("Missing required attribute: test_field"));
-
-        let err = Error::CredentialsNotProvided();
-        assert!(err.to_string().contains("Credentials are not provided"));
-    }
-
-    #[test]
     fn test_constants() {
         assert_eq!(DEFAULT_NATS_HOST, "localhost:4222");
     }

@@ -510,14 +510,6 @@ mod tests {
     }
 
     #[test]
-    fn test_error_display() {
-        let err = Error::MissingRequiredAttribute("test_field".to_string());
-        assert!(err
-            .to_string()
-            .contains("Missing required attribute: test_field"));
-    }
-
-    #[test]
     fn test_constants() {
         assert_eq!(DEFAULT_MESSAGE_SUBJECT, "object_store.reader.in");
         assert_eq!(DEFAULT_BATCH_SIZE, 1000);

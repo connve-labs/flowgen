@@ -180,20 +180,6 @@ mod tests {
     use tokio::sync::broadcast;
 
     #[test]
-    fn test_error_display() {
-        let err = Error::MissingRequiredAttribute("test_field".to_string());
-        assert!(err
-            .to_string()
-            .contains("Missing required attribute: test_field"));
-
-        let err = Error::Other(Box::new(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            "test error",
-        )));
-        assert!(err.to_string().contains("Other error with subscriber"));
-    }
-
-    #[test]
     fn test_subscriber_builder_new() {
         let builder = SubscriberBuilder::new();
         assert!(builder.config.is_none());

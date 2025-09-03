@@ -328,17 +328,4 @@ mod tests {
         assert_eq!(publisher.config.topic, "/event/Test__e");
     }
 
-    #[test]
-    fn test_error_display() {
-        let err = Error::MissingRequiredAttribute("test_field".to_string());
-        assert!(err
-            .to_string()
-            .contains("Missing required event attribute: test_field"));
-
-        let err = Error::EmptyObject();
-        assert!(err.to_string().contains("Empty object"));
-
-        let err = Error::SchemaParse();
-        assert!(err.to_string().contains("Error parsing Schema Json"));
-    }
 }

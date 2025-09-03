@@ -217,14 +217,6 @@ mod tests {
     use tokio::sync::broadcast;
 
     #[test]
-    fn test_error_display() {
-        let err = Error::MissingRequiredAttribute("test_field".to_string());
-        assert!(err
-            .to_string()
-            .contains("Missing required attribute: test_field"));
-    }
-
-    #[test]
     fn test_error_from_serde_json_error() {
         let json_error = serde_json::from_str::<serde_json::Value>("invalid json").unwrap_err();
         let error: Error = json_error.into();

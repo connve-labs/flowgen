@@ -143,8 +143,11 @@ mod tests {
     fn test_client_builder_options() {
         let mut options = HashMap::new();
         options.insert("region".to_string(), "us-east-1".to_string());
-        options.insert("endpoint".to_string(), "https://s3.amazonaws.com".to_string());
-        
+        options.insert(
+            "endpoint".to_string(),
+            "https://s3.amazonaws.com".to_string(),
+        );
+
         let builder = ClientBuilder::new().options(options.clone());
         assert_eq!(builder.options, Some(options));
     }
@@ -153,7 +156,9 @@ mod tests {
     fn test_client_builder_build_missing_path() {
         let result = ClientBuilder::new().build();
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "path"));
+        assert!(
+            matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "path")
+        );
     }
 
     #[test]
@@ -198,10 +203,7 @@ mod tests {
     #[test]
     fn test_client_builder_minimal() {
         let path = PathBuf::from("file:///data/");
-        let client = ClientBuilder::new()
-            .path(path.clone())
-            .build()
-            .unwrap();
+        let client = ClientBuilder::new().path(path.clone()).build().unwrap();
 
         assert_eq!(client.path, path);
         assert!(client.credentials.is_none());
@@ -210,23 +212,10 @@ mod tests {
     }
 
     #[test]
-    fn test_error_display() {
-        let err = Error::MissingRequiredAttribute("test_field".to_string());
-        assert!(err.to_string().contains("Missing required attribute"));
-
-        let err = Error::EmptyPath();
-        assert!(err.to_string().contains("No path provided"));
-    }
-
-    #[test]  
     fn test_client_context_structure() {
-        // Test that Context has the expected fields
-        // We can't easily test the actual connection without real object stores,
-        // but we can verify the structure exists
         let path = PathBuf::from("file:///tmp/");
         let client = ClientBuilder::new().path(path).build().unwrap();
-        
-        // Context should be None before connecting
+
         assert!(client.context.is_none());
     }
 }

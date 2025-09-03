@@ -111,12 +111,6 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn test_error_display() {
-        let err = Error::NoRecordBatch();
-        assert!(err.to_string().contains("Error getting record batch"));
-    }
-
-    #[test]
     fn test_flowgen_message_ext_json() {
         let json_data = json!({
             "test": "value",

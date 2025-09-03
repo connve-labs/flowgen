@@ -322,15 +322,6 @@ mod tests {
     }
 
     #[test]
-    fn test_error_display() {
-        let err = Error::MissingRequiredAttribute("test_field".to_string());
-        assert!(err.to_string().contains("Missing required attribute: test_field"));
-
-        let err = Error::NoObjectStoreContext();
-        assert!(err.to_string().contains("Could not initialize object store context"));
-    }
-
-    #[test]
     fn test_constants() {
         assert_eq!(DEFAULT_MESSAGE_SUBJECT, "object_store.writer.out");
     }

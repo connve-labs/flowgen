@@ -1,0 +1,49 @@
+name: Test
+
+on:
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test-rust-latest:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    - uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        override: true
+    - name: Install system dependencies
+      run: |
+        sudo apt update -qq
+        sudo apt-get -qq install pkg-config libssl-dev protobuf-compiler git
+    - name: Add rustfmt and build
+      run: |
+        rustup component add rustfmt
+        cargo build --verbose
+        cargo test --verbose
+        cargo fmt --all
+
+  test-rust-nightly:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    - uses: actions-rs/toolchain@v1
+      with:
+        toolchain: nightly
+        override: true
+    - name: Install system dependencies
+      run: |
+        sudo apt update -qq
+        sudo apt-get -qq install pkg-config libssl-dev protobuf-compiler git
+    - name: Add rustfmt and build
+      run: |
+        rustup component add rustfmt
+        cargo build --verbose
+        cargo test --verbose
+        cargo fmt --all

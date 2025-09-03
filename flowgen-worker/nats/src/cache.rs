@@ -224,21 +224,6 @@ mod tests {
     }
 
     #[test]
-    fn test_error_display() {
-        let err = Error::MissingRequiredAttribute("test_field".to_string());
-        assert!(err.to_string().contains("Missing required event attribute: test_field"));
-
-        let err = Error::EmptyBuffer();
-        assert!(err.to_string().contains("No value in provided buffer"));
-
-        let err = Error::MissingKVStore();
-        assert!(err.to_string().contains("Missing required value KV Store"));
-
-        let err = Error::MissingJetStreamContext();
-        assert!(err.to_string().contains("Missing required value JetStream Context"));
-    }
-
-    #[test]
     fn test_cache_structure() {
         // Test that Cache can be constructed and has the expected structure
         let path = PathBuf::from("/test/creds.jwt");

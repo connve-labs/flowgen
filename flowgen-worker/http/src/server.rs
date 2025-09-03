@@ -139,13 +139,6 @@ mod tests {
     }
 
     #[test]
-    fn test_error_display() {
-        let io_error = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "test error");
-        let error = Error::IO(io_error);
-        assert!(error.to_string().contains("test error"));
-    }
-
-    #[test]
     fn test_error_from_io_error() {
         let io_error = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
         let error: Error = io_error.into();

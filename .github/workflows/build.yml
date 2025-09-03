@@ -3,49 +3,13 @@ name: Build
 on:
   push:
     branches: [ main ]
-  pull_request:
-    branches: [ main ]
 
 jobs:
-  test-rust-latest:
-    runs-on: ubuntu-latest
-    if: github.ref != 'refs/heads/main'
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        submodules: recursive
-    - uses: actions-rs/toolchain@v1
-      with:
-        toolchain: stable
-        override: true
-    - name: Make scripts executable
-      run: chmod +x ./scripts/*.sh
-    - name: Build and test
-      run: ./scripts/build.sh
-
-  test-rust-nightly:
-    runs-on: ubuntu-latest
-    if: github.ref != 'refs/heads/main'
-    continue-on-error: true
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        submodules: recursive
-    - uses: actions-rs/toolchain@v1
-      with:
-        toolchain: nightly
-        override: true
-    - name: Make scripts executable
-      run: chmod +x ./scripts/*.sh
-    - name: Build and test
-      run: ./scripts/build.sh
-
   build-and-push:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-    if: github.ref == 'refs/heads/main'
     steps:
     - uses: actions/checkout@v4
       with:
@@ -64,6 +28,7 @@ jobs:
         context: .
         file: docker/Dockerfile
         push: true
-        tags: ghcr.io/${{ github.repository }}/flowgen:latest
+        platforms: linux/amd64
+        tags: ghcr.io/${{ github.repository }}:latest
         build-args: |
           SERVICE_NAME=flowgen

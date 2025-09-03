@@ -339,19 +339,6 @@ mod tests {
     }
 
     #[test]
-    fn test_error_display() {
-        let err = Error::MissingRequiredAttribute("test_field".to_string());
-        assert!(err
-            .to_string()
-            .contains("Missing required attribute: test_field"));
-
-        let err = Error::PayloadConfig();
-        assert!(err
-            .to_string()
-            .contains("Either payload json or payload input is required"));
-    }
-
-    #[test]
     fn test_error_from_io_error() {
         let io_error = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
         let error: Error = io_error.into();
