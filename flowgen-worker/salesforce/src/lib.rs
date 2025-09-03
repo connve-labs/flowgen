@@ -19,3 +19,9 @@ pub mod pubsub {
     /// Salesforce Pub/Sub subscriber implementation for event consumption.
     pub mod subscriber;
 }
+
+pub mod bulkapi {
+    pub mod config;
+    pub mod job_creator;
+    pub mod job_retriever;
+}
