@@ -23,12 +23,15 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
     - name: Build and push Docker image
-      uses: docker/build-push-action@v5
+      uses: docker/build-push-action@v6.18.0
       with:
         context: .
         file: docker/Dockerfile
         push: true
-        platforms: linux/amd64
+        platforms: linux/amd64,linux/arm64
         tags: ghcr.io/${{ github.repository }}:latest
+        provenance: false
+        sbom: false
         build-args: |
           SERVICE_NAME=flowgen
+          COMMIT=${{ github.sha }}
