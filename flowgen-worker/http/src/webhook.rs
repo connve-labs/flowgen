@@ -146,8 +146,9 @@ impl flowgen_core::task::runner::Runner for Processor {
             crate::config::Method::HEAD => MethodRouter::new().head(handler),
         };
 
+        let webhook_path = format!("/workers{}", config.endpoint);
         self.http_server
-            .register_route(config.endpoint.clone(), method_router)
+            .register_route(webhook_path, method_router)
             .await;
 
         Ok(())

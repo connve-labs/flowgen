@@ -57,11 +57,13 @@ impl HttpServer {
         }
 
         let routes = self.routes.read().await;
-        let mut router = Router::new();
+        let mut api_router = Router::new();
 
         for (path, method_router) in routes.iter() {
-            router = router.route(path, method_router.clone());
+            api_router = api_router.route(path, method_router.clone());
         }
+
+        let router = Router::new().nest("/api/flowgen", api_router);
         let listener =
             tokio::net::TcpListener::bind(format!("0.0.0.0:{DEFAULT_HTTP_PORT}")).await?;
         event!(
