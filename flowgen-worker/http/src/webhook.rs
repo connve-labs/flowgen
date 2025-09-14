@@ -3,13 +3,15 @@
 //! Processes incoming HTTP webhook requests, extracting headers and payload
 //! data and converting them into events for further processing in the pipeline.
 
+use crate::config::Credentials;
 use axum::{body::Body, extract::Request, response::IntoResponse, routing::MethodRouter};
+use base64::{engine::general_purpose::STANDARD, Engine};
 use flowgen_core::event::{
     generate_subject, Event, EventBuilder, EventData, SubjectSuffix, DEFAULT_LOG_MESSAGE,
 };
 use reqwest::{header::HeaderMap, StatusCode};
 use serde_json::{json, Map, Value};
-use std::sync::Arc;
+use std::{fs, sync::Arc};
 use tokio::sync::broadcast::Sender;
 use tracing::{event, Level};
 
@@ -36,6 +38,9 @@ pub enum Error {
     /// Axum HTTP processing failed.
     #[error(transparent)]
     Axum(#[from] axum::Error),
+    /// Authentication failed.
+    #[error("Unauthorized")]
+    Unauthorized,
     /// Input/output operation failed.
     #[error(transparent)]
     IO(#[from] std::io::Error),
@@ -64,14 +69,62 @@ struct EventHandler {
     tx: Sender<Event>,
     /// Current task identifier.
     current_task_id: usize,
+    /// Pre-loaded authentication credentials.
+    credentials: Option<Credentials>,
 }
 
 impl EventHandler {
+    /// Validate authentication credentials against incoming request headers.
+    fn validate_authentication(&self, headers: &HeaderMap) -> Result<(), Error> {
+        let credentials = match &self.credentials {
+            Some(creds) => creds,
+            None => return Ok(()),
+        };
+
+        let auth_header = match headers.get("authorization") {
+            Some(header) => header,
+            None => return Err(Error::Unauthorized),
+        };
+
+        let auth_value = match auth_header.to_str() {
+            Ok(value) => value,
+            Err(_) => return Err(Error::Unauthorized),
+        };
+
+        // Check bearer token authentication
+        if let Some(expected_token) = &credentials.bearer_auth {
+            match auth_value.strip_prefix("Bearer ") {
+                Some(token) if token == expected_token => return Ok(()),
+                Some(_) | None => {} // Continue to check basic auth
+            }
+        }
+
+        // Check basic authentication
+        if let Some(basic_auth) = &credentials.basic_auth {
+            if let Some(encoded) = auth_value.strip_prefix("Basic ") {
+                if let Ok(decoded_bytes) = STANDARD.decode(encoded) {
+                    if let Ok(decoded_str) = String::from_utf8(decoded_bytes) {
+                        let expected = format!("{}:{}", basic_auth.username, basic_auth.password);
+                        if decoded_str == expected {
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+        }
+
+        Err(Error::Unauthorized)
+    }
+
     async fn handle(
         &self,
         headers: HeaderMap,
         request: Request<Body>,
     ) -> Result<StatusCode, Error> {
+        // Validate the authentication first.
+        if let Err(Error::Unauthorized) = self.validate_authentication(&headers) {
+            return Ok(StatusCode::UNAUTHORIZED);
+        }
         let body = axum::body::to_bytes(request.into_body(), usize::MAX).await?;
 
         let json_body = match body.is_empty() {
@@ -127,10 +180,21 @@ impl flowgen_core::task::runner::Runner for Processor {
     type Error = Error;
     async fn run(self) -> Result<(), Error> {
         let config = Arc::clone(&self.config);
+
+        // Load credentials at task creation time
+        let credentials = match &config.credentials {
+            Some(path) => {
+                let content = fs::read_to_string(path)?;
+                Some(serde_json::from_str(&content)?)
+            }
+            None => None,
+        };
+
         let event_handler = EventHandler {
             config: self.config,
             tx: self.tx,
             current_task_id: self.current_task_id,
+            credentials,
         };
 
         let handler = move |headers: HeaderMap, request: Request<Body>| async move {
@@ -441,6 +505,7 @@ mod tests {
             config,
             tx,
             current_task_id: 0,
+            credentials: None,
         };
     }
 }

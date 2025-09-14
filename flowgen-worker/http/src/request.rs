@@ -4,12 +4,12 @@
 //! and various payload formats. Processes events by making HTTP requests
 //! and publishing the responses as new events.
 
+use crate::config::Credentials;
 use flowgen_core::{
     config::ConfigExt,
     event::{generate_subject, Event, EventBuilder, EventData, SubjectSuffix},
 };
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tokio::{
@@ -20,24 +20,6 @@ use tracing::{event, Level};
 
 /// Default subject for HTTP response events.
 const DEFAULT_MESSAGE_SUBJECT: &str = "http.response.out";
-
-/// Authentication credentials for HTTP requests.
-#[derive(PartialEq, Clone, Debug, Default, Deserialize, Serialize)]
-struct Credentials {
-    /// Bearer token for authorization header.
-    bearer_auth: Option<String>,
-    /// Basic authentication credentials.
-    basic_auth: Option<BasicAuth>,
-}
-
-/// Basic authentication username and password.
-#[derive(PartialEq, Clone, Debug, Default, Deserialize, Serialize)]
-struct BasicAuth {
-    /// Username for basic authentication.
-    username: String,
-    /// Password for basic authentication.
-    password: String,
-}
 
 /// Errors that can occur during HTTP request processing.
 #[derive(thiserror::Error, Debug)]
@@ -265,6 +247,7 @@ impl ProcessorBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::BasicAuth;
     use std::collections::HashMap;
     use tokio::sync::broadcast;
 

@@ -68,6 +68,24 @@ pub enum Method {
     HEAD,
 }
 
+/// Authentication credentials for HTTP requests.
+#[derive(PartialEq, Clone, Debug, Default, Deserialize, Serialize)]
+pub struct Credentials {
+    /// Bearer token for authorization header.
+    pub bearer_auth: Option<String>,
+    /// Basic authentication credentials.
+    pub basic_auth: Option<BasicAuth>,
+}
+
+/// Basic authentication username and password.
+#[derive(PartialEq, Clone, Debug, Default, Deserialize, Serialize)]
+pub struct BasicAuth {
+    /// Username for basic authentication.
+    pub username: String,
+    /// Password for basic authentication.
+    pub password: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
