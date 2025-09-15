@@ -26,8 +26,12 @@ const DEFAULT_MESSAGE_SUBJECT: &str = "http.response.out";
 #[non_exhaustive]
 pub enum Error {
     /// Input/output operation failed.
-    #[error(transparent)]
-    IO(#[from] std::io::Error),
+    #[error("IO operation failed on path {path}: {source}")]
+    IO {
+        path: std::path::PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
     /// Failed to send event message.
     #[error(transparent)]
     SendMessage(#[from] tokio::sync::broadcast::error::SendError<Event>),
@@ -111,7 +115,13 @@ impl EventHandler {
         }
 
         if let Some(credentials) = &self.config.credentials {
-            let credentials_string = fs::read_to_string(credentials).await?;
+            let credentials_string =
+                fs::read_to_string(credentials)
+                    .await
+                    .map_err(|e| Error::IO {
+                        path: credentials.clone(),
+                        source: e,
+                    })?;
             let credentials: Credentials = serde_json::from_str(&credentials_string)?;
 
             if let Some(bearer_token) = credentials.bearer_auth {
@@ -249,6 +259,7 @@ mod tests {
     use super::*;
     use crate::config::BasicAuth;
     use std::collections::HashMap;
+    use std::path::PathBuf;
     use tokio::sync::broadcast;
 
     #[test]
@@ -322,10 +333,14 @@ mod tests {
     }
 
     #[test]
-    fn test_error_from_io_error() {
+    fn test_error_io_structure() {
+        use std::path::PathBuf;
         let io_error = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
-        let error: Error = io_error.into();
-        assert!(matches!(error, Error::IO(_)));
+        let error = Error::IO {
+            path: PathBuf::from("/test/file.json"),
+            source: io_error,
+        };
+        assert!(matches!(error, Error::IO { .. }));
     }
 
     #[test]
@@ -470,7 +485,7 @@ mod tests {
                 send_as: crate::config::PayloadSendAs::Json,
             }),
             headers: Some(headers),
-            credentials: Some("/test/creds.json".to_string()),
+            credentials: Some(PathBuf::from("/test/creds.json")),
         });
 
         let result = ProcessorBuilder::new()

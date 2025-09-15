@@ -66,7 +66,7 @@ impl HttpServer {
         let router = Router::new().nest("/api/flowgen", api_router);
         let server_port = port.unwrap_or(DEFAULT_HTTP_PORT);
         let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{server_port}")).await?;
-        event!(Level::INFO, "Starting HTTP Server on port {}", server_port);
+        event!(Level::INFO, "Starting HTTP Server on port: {}", server_port);
 
         *server_started = true;
         axum::serve(listener, router).await.map_err(Error::IO)

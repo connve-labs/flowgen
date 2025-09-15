@@ -7,4 +7,4 @@ flows:
   dir: "path_to_configs_folder"
 # HTTP server configuration (optional, defaults to port 3000).
 http:
-  port: 8080
+  port: 3000

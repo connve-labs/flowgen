@@ -338,9 +338,7 @@ mod tests {
 
     #[test]
     fn test_http_options_creation() {
-        let http_options = HttpOptions {
-            port: Some(8080),
-        };
+        let http_options = HttpOptions { port: Some(8080) };
 
         assert_eq!(http_options.port, Some(8080));
     }
@@ -357,9 +355,7 @@ mod tests {
         let app_config = AppConfig {
             cache: None,
             flows: FlowOptions { dir: None },
-            http: Some(HttpOptions {
-                port: Some(8080),
-            }),
+            http: Some(HttpOptions { port: Some(8080) }),
         };
 
         assert!(app_config.http.is_some());
