@@ -38,9 +38,15 @@ pub enum Error {
     /// Axum HTTP processing failed.
     #[error(transparent)]
     Axum(#[from] axum::Error),
-    /// Authentication failed.
-    #[error("Unauthorized")]
-    Unauthorized,
+    /// Authentication failed - no credentials provided.
+    #[error("No authorization header provided")]
+    NoCredentials,
+    /// Authentication failed - invalid credentials.
+    #[error("Invalid authorization credentials")]
+    InvalidCredentials,
+    /// Authentication failed - malformed authorization header.
+    #[error("Malformed authorization header")]
+    MalformedCredentials,
     /// Input/output operation failed.
     #[error(transparent)]
     IO(#[from] std::io::Error),
@@ -83,37 +89,43 @@ impl EventHandler {
 
         let auth_header = match headers.get("authorization") {
             Some(header) => header,
-            None => return Err(Error::Unauthorized),
+            None => return Err(Error::NoCredentials),
         };
 
         let auth_value = match auth_header.to_str() {
             Ok(value) => value,
-            Err(_) => return Err(Error::Unauthorized),
+            Err(_) => return Err(Error::MalformedCredentials),
         };
 
-        // Check bearer token authentication
+        // Check bearer authentication.
         if let Some(expected_token) = &credentials.bearer_auth {
             match auth_value.strip_prefix("Bearer ") {
                 Some(token) if token == expected_token => return Ok(()),
-                Some(_) | None => {} // Continue to check basic auth
+                Some(_) => return Err(Error::InvalidCredentials),
+                None => {}
             }
         }
 
-        // Check basic authentication
+        // Check basic authentication.
         if let Some(basic_auth) = &credentials.basic_auth {
             if let Some(encoded) = auth_value.strip_prefix("Basic ") {
-                if let Ok(decoded_bytes) = STANDARD.decode(encoded) {
-                    if let Ok(decoded_str) = String::from_utf8(decoded_bytes) {
-                        let expected = format!("{}:{}", basic_auth.username, basic_auth.password);
-                        if decoded_str == expected {
-                            return Ok(());
+                match STANDARD.decode(encoded) {
+                    Ok(decoded_bytes) => match String::from_utf8(decoded_bytes) {
+                        Ok(decoded_str) => {
+                            let expected =
+                                format!("{}:{}", basic_auth.username, basic_auth.password);
+                            return match decoded_str == expected {
+                                true => Ok(()),
+                                false => Err(Error::InvalidCredentials),
+                            };
                         }
-                    }
+                        Err(_) => return Err(Error::MalformedCredentials),
+                    },
+                    Err(_) => return Err(Error::MalformedCredentials),
                 }
             }
         }
-
-        Err(Error::Unauthorized)
+        Err(Error::InvalidCredentials)
     }
 
     async fn handle(
@@ -121,10 +133,23 @@ impl EventHandler {
         headers: HeaderMap,
         request: Request<Body>,
     ) -> Result<StatusCode, Error> {
-        // Validate the authentication first.
-        if let Err(Error::Unauthorized) = self.validate_authentication(&headers) {
+        let subject = generate_subject(
+            self.config.label.as_deref(),
+            DEFAULT_MESSAGE_SUBJECT,
+            SubjectSuffix::Timestamp,
+        );
+
+        // Validate the authentication and return error if request is not authorized.
+        if let Err(auth_error) = self.validate_authentication(&headers) {
+            event!(
+                Level::ERROR,
+                "Webhook authentication failed for {}: {}",
+                subject,
+                auth_error
+            );
             return Ok(StatusCode::UNAUTHORIZED);
         }
+
         let body = axum::body::to_bytes(request.into_body(), usize::MAX).await?;
 
         let json_body = match body.is_empty() {
@@ -144,12 +169,6 @@ impl EventHandler {
             DEFAULT_HEADERS_KEY: Value::Object(headers_map),
             DEFAULT_PAYLOAD_KEY: json_body
         });
-
-        let subject = generate_subject(
-            self.config.label.as_deref(),
-            DEFAULT_MESSAGE_SUBJECT,
-            SubjectSuffix::Timestamp,
-        );
 
         let e = EventBuilder::new()
             .data(EventData::Json(data))
