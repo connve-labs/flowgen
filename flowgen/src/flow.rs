@@ -148,12 +148,12 @@ impl Flow<'_> {
             .map_err(Error::Cache)?;
         let cache = Arc::new(cache);
 
-        // Create task context for this execution
+        // Create task context for execution.
         let task_context = Arc::new(
             flowgen_core::task::context::TaskContextBuilder::new()
-                .flow_id(self.config.flow.id.clone())
-                .flow_label(self.config.flow.label.clone())
-                .k8s_enabled(false) // TODO: read from app config when available
+                .flow_name(self.config.flow.name.clone())
+                .flow_labels(self.config.flow.labels.clone())
+                .k8s_enabled(false) // TODO: read from app config when available.
                 .metrics_enabled(true)
                 .build()
                 .map_err(|e| Error::MissingRequiredAttribute(e.to_string()))?,
@@ -178,14 +178,14 @@ impl Flow<'_> {
                             .await
                             .map_err(|e| Error::ConverProcessor {
                                 source: Box::new(e),
-                                flow: flow_config.flow.id.to_owned(),
+                                flow: flow_config.flow.name.to_owned(),
                                 task_id: i,
                             })?
                             .run()
                             .await
                             .map_err(|e| Error::ConverProcessor {
                                 source: Box::new(e),
-                                flow: flow_config.flow.id.to_owned(),
+                                flow: flow_config.flow.name.to_owned(),
                                 task_id: i,
                             })?;
 
@@ -210,14 +210,14 @@ impl Flow<'_> {
                             .await
                             .map_err(|e| Error::GenerateSubscriber {
                                 source: Box::new(e),
-                                flow: flow_config.flow.id.to_owned(),
+                                flow: flow_config.flow.name.to_owned(),
                                 task_id: i,
                             })?
                             .run()
                             .await
                             .map_err(|e| Error::GenerateSubscriber {
                                 source: Box::new(e),
-                                flow: flow_config.flow.id.to_owned(),
+                                flow: flow_config.flow.name.to_owned(),
                                 task_id: i,
                             })?;
                         Ok(())
@@ -241,14 +241,14 @@ impl Flow<'_> {
                             .await
                             .map_err(|e| Error::HttpRequestProcessor {
                                 source: Box::new(e),
-                                flow: flow_config.flow.id.to_owned(),
+                                flow: flow_config.flow.name.to_owned(),
                                 task_id: i,
                             })?
                             .run()
                             .await
                             .map_err(|e| Error::HttpRequestProcessor {
                                 source: Box::new(e),
-                                flow: flow_config.flow.id.to_owned(),
+                                flow: flow_config.flow.name.to_owned(),
                                 task_id: i,
                             })?;
 
@@ -273,14 +273,14 @@ impl Flow<'_> {
                             .await
                             .map_err(|e| Error::HttpWebhookProcessor {
                                 source: Box::new(e),
-                                flow: flow_config.flow.id.to_owned(),
+                                flow: flow_config.flow.name.to_owned(),
                                 task_id: i,
                             })?
                             .run()
                             .await
                             .map_err(|e| Error::HttpWebhookProcessor {
                                 source: Box::new(e),
-                                flow: flow_config.flow.id.to_owned(),
+                                flow: flow_config.flow.name.to_owned(),
                                 task_id: i,
                             })?;
 
@@ -304,14 +304,14 @@ impl Flow<'_> {
                             .await
                             .map_err(|e| Error::NatsJetStreamSubscriber {
                                 source: Box::new(e),
-                                flow: flow_config.flow.id.to_owned(),
+                                flow: flow_config.flow.name.to_owned(),
                                 task_id: i,
                             })?
                             .run()
                             .await
                             .map_err(|e| Error::NatsJetStreamSubscriber {
                                 source: Box::new(e),
-                                flow: flow_config.flow.id.to_owned(),
+                                flow: flow_config.flow.name.to_owned(),
                                 task_id: i,
                             })?;
                         Ok(())
@@ -333,14 +333,14 @@ impl Flow<'_> {
                             .await
                             .map_err(|e| Error::NatsJetStreamPublisher {
                                 source: Box::new(e),
-                                flow: flow_config.flow.id.to_owned(),
+                                flow: flow_config.flow.name.to_owned(),
                                 task_id: i,
                             })?
                             .run()
                             .await
                             .map_err(|e| Error::NatsJetStreamPublisher {
                                 source: Box::new(e),
-                                flow: flow_config.flow.id.to_owned(),
+                                flow: flow_config.flow.name.to_owned(),
                                 task_id: i,
                             })?;
                         Ok(())
@@ -364,14 +364,14 @@ impl Flow<'_> {
                             .await
                             .map_err(|e| Error::SalesforcePubSubSubscriber {
                                 source: Box::new(e),
-                                flow: flow_config.flow.id.to_owned(),
+                                flow: flow_config.flow.name.to_owned(),
                                 task_id: i,
                             })?
                             .run()
                             .await
                             .map_err(|e| Error::SalesforcePubSubSubscriber {
                                 source: Box::new(e),
-                                flow: flow_config.flow.id.to_owned(),
+                                flow: flow_config.flow.name.to_owned(),
                                 task_id: i,
                             })?;
                         Ok(())
@@ -393,14 +393,14 @@ impl Flow<'_> {
                             .await
                             .map_err(|e| Error::SalesforcePubsubPublisher {
                                 source: Box::new(e),
-                                flow: flow_config.flow.id.to_owned(),
+                                flow: flow_config.flow.name.to_owned(),
                                 task_id: i,
                             })?
                             .run()
                             .await
                             .map_err(|e| Error::SalesforcePubsubPublisher {
                                 source: Box::new(e),
-                                flow: flow_config.flow.id.to_owned(),
+                                flow: flow_config.flow.name.to_owned(),
                                 task_id: i,
                             })?;
                         Ok(())
@@ -426,14 +426,14 @@ impl Flow<'_> {
                             .await
                             .map_err(|e| Error::ObjectStoreReader {
                                 source: Box::new(e),
-                                flow: flow_config.flow.id.to_owned(),
+                                flow: flow_config.flow.name.to_owned(),
                                 task_id: i,
                             })?
                             .run()
                             .await
                             .map_err(|e| Error::ObjectStoreReader {
                                 source: Box::new(e),
-                                flow: flow_config.flow.id.to_owned(),
+                                flow: flow_config.flow.name.to_owned(),
                                 task_id: i,
                             })?;
                         Ok(())
@@ -455,14 +455,14 @@ impl Flow<'_> {
                             .await
                             .map_err(|e| Error::ObjectStoreWriter {
                                 source: Box::new(e),
-                                flow: flow_config.flow.id.to_owned(),
+                                flow: flow_config.flow.name.to_owned(),
                                 task_id: i,
                             })?
                             .run()
                             .await
                             .map_err(|e| Error::ObjectStoreWriter {
                                 source: Box::new(e),
-                                flow: flow_config.flow.id.to_owned(),
+                                flow: flow_config.flow.name.to_owned(),
                                 task_id: i,
                             })?;
                         Ok(())
@@ -558,8 +558,8 @@ mod tests {
     fn test_flow_builder_config() {
         let flow_config = Arc::new(FlowConfig {
             flow: Flow {
-                id: "test_flow".to_string(),
-                label: None,
+                name: "test_flow".to_string(),
+                labels: None,
                 tasks: vec![],
             },
         });
@@ -602,8 +602,8 @@ mod tests {
     fn test_flow_builder_build_missing_cache_path() {
         let flow_config = Arc::new(FlowConfig {
             flow: Flow {
-                id: "test_flow".to_string(),
-                label: None,
+                name: "test_flow".to_string(),
+                labels: None,
                 tasks: vec![],
             },
         });
@@ -624,8 +624,8 @@ mod tests {
     fn test_flow_builder_build_missing_http_server() {
         let flow_config = Arc::new(FlowConfig {
             flow: Flow {
-                id: "test_flow".to_string(),
-                label: None,
+                name: "test_flow".to_string(),
+                labels: None,
                 tasks: vec![],
             },
         });
@@ -646,8 +646,8 @@ mod tests {
     fn test_flow_builder_build_success() {
         let flow_config = Arc::new(FlowConfig {
             flow: Flow {
-                id: "success_flow".to_string(),
-                label: None,
+                name: "success_flow".to_string(),
+                labels: None,
                 tasks: vec![],
             },
         });
@@ -671,8 +671,8 @@ mod tests {
     fn test_flow_builder_chain() {
         let flow_config = Arc::new(FlowConfig {
             flow: Flow {
-                id: "chain_flow".to_string(),
-                label: None,
+                name: "chain_flow".to_string(),
+                labels: None,
                 tasks: vec![],
             },
         });

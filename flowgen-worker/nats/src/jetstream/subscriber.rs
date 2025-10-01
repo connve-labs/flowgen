@@ -164,7 +164,10 @@ impl SubscriberBuilder {
         self
     }
 
-    pub fn task_context(mut self, task_context: Arc<flowgen_core::task::context::TaskContext>) -> Self {
+    pub fn task_context(
+        mut self,
+        task_context: Arc<flowgen_core::task::context::TaskContext>,
+    ) -> Self {
         self.task_context = Some(task_context);
         self
     }
@@ -338,6 +341,7 @@ mod tests {
             config: config.clone(),
             tx,
             current_task_id: 0,
+            task_context: todo!(),
         };
 
         assert_eq!(subscriber.config, config);

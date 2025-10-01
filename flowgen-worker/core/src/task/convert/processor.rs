@@ -263,10 +263,15 @@ mod tests {
 
     /// Creates a mock TaskContext for testing.
     fn create_mock_task_context() -> Arc<crate::task::context::TaskContext> {
+        let mut labels = Map::new();
+        labels.insert(
+            "description".to_string(),
+            Value::String("Clone Test".to_string()),
+        );
         Arc::new(
             crate::task::context::TaskContextBuilder::new()
-                .flow_id("test-flow".to_string())
-                .flow_label(Some("Test Flow".to_string()))
+                .flow_name("test-flow".to_string())
+                .flow_labels(Some(labels))
                 .k8s_enabled(false)
                 .metrics_enabled(true)
                 .build()

@@ -242,7 +242,10 @@ impl ProcessorBuilder {
         self
     }
 
-    pub fn task_context(mut self, task_context: Arc<flowgen_core::task::context::TaskContext>) -> Self {
+    pub fn task_context(
+        mut self,
+        task_context: Arc<flowgen_core::task::context::TaskContext>,
+    ) -> Self {
         self.task_context = Some(task_context);
         self
     }
@@ -270,16 +273,22 @@ impl ProcessorBuilder {
 mod tests {
     use super::*;
     use crate::config::BasicAuth;
+    use serde_json::Map;
     use std::collections::HashMap;
     use std::path::PathBuf;
     use tokio::sync::broadcast;
 
     /// Creates a mock TaskContext for testing.
     fn create_mock_task_context() -> Arc<flowgen_core::task::context::TaskContext> {
+        let mut labels = Map::new();
+        labels.insert(
+            "description".to_string(),
+            Value::String("Clone Test".to_string()),
+        );
         Arc::new(
             flowgen_core::task::context::TaskContextBuilder::new()
-                .flow_id("test-flow".to_string())
-                .flow_label(Some("Test Flow".to_string()))
+                .flow_name("test-flow".to_string())
+                .flow_labels(Some(labels))
                 .k8s_enabled(false)
                 .metrics_enabled(true)
                 .build()
