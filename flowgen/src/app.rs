@@ -27,6 +27,9 @@ pub enum Error {
     /// Flow directory path is invalid or cannot be converted to string.
     #[error("Invalid path")]
     InvalidPath,
+    /// Kubernetes host creation error.
+    #[error(transparent)]
+    Kube(#[from] kube::Error),
 }
 /// Main application that loads and runs flows concurrently.
 pub struct App {
@@ -69,15 +72,35 @@ impl flowgen_core::task::runner::Runner for App {
         // Create shared HTTP Server.
         let http_server = Arc::new(flowgen_http::server::HttpServer::new());
 
+        // Create host client if configured.
+        let host_client = if let Some(host_options) = &app_config.host {
+            match &host_options.host_type {
+                crate::config::HostType::K8s => {
+                    let mut host_builder = flowgen_core::host::k8s::K8sHostBuilder::new();
+                    if let Some(namespace) = &host_options.namespace {
+                        host_builder = host_builder.namespace(namespace.clone());
+                    }
+                    let k8s_host = host_builder.build().await?;
+                    Some(Arc::new(flowgen_core::task::context::HostClient {
+                        client: std::sync::Arc::new(k8s_host),
+                    }))
+                }
+            }
+        } else {
+            None
+        };
+
         // Initialize flows and register routes
         let mut flow_tasks = Vec::new();
         for config in flow_configs {
             let app_config = Arc::clone(&app_config);
             let http_server = Arc::clone(&http_server);
+            let host_client = host_client.as_ref().map(Arc::clone);
 
             let mut flow_builder = super::flow::FlowBuilder::new()
                 .config(Arc::new(config))
-                .http_server(http_server);
+                .http_server(http_server)
+                .host(host_client);
 
             if let Some(cache) = &app_config.cache {
                 if cache.enabled {

@@ -327,8 +327,6 @@ mod tests {
             flowgen_core::task::context::TaskContextBuilder::new()
                 .flow_name("test-flow".to_string())
                 .flow_labels(Some(labels))
-                .k8s_enabled(false)
-                .metrics_enabled(true)
                 .build()
                 .unwrap(),
         )

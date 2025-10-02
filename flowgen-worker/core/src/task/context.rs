@@ -14,19 +14,46 @@ pub enum Error {
     MissingRequiredAttribute(String),
 }
 
-/// Context information for task execution shared across all tasks.
+/// Flow identification and metadata.
 #[derive(Clone, Debug)]
+pub struct FlowOptions {
+    /// Flow name.
+    pub name: String,
+    /// Optional labels for flow metadata.
+    pub labels: Option<Map<String, Value>>,
+}
+
+/// Context information for task execution shared across all tasks.
+#[derive(Clone)]
 pub struct TaskContext {
-    /// Unique flow identifier.
-    pub flow_name: String,
-    /// Optional labels for flow metadata and logging.
-    pub flow_labels: Option<Map<String, Value>>,
-    /// Whether Kubernetes features are enabled for this flow.
-    pub k8s_enabled: bool,
-    /// Kubernetes namespace for resources created by this flow.
-    pub k8s_namespace: Option<String>,
-    /// Whether metrics collection is enabled for this flow.
-    pub metrics_enabled: bool,
+    /// Flow identification and metadata.
+    pub flow: FlowOptions,
+    /// Optional host client for coordination (e.g., lease management).
+    pub host: Option<HostClient>,
+}
+
+/// Host client for distributed coordination.
+#[derive(Clone)]
+pub struct HostClient {
+    /// Arc-wrapped host implementation for shared access.
+    pub client: std::sync::Arc<dyn crate::host::Host>,
+}
+
+impl std::fmt::Debug for TaskContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TaskContext")
+            .field("flow", &self.flow)
+            .field("host", &self.host.is_some())
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for HostClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HostClient")
+            .field("client", &"<dyn Host>")
+            .finish()
+    }
 }
 
 /// Builder for constructing TaskContext instances.
@@ -36,22 +63,14 @@ pub struct TaskContextBuilder {
     flow_name: Option<String>,
     /// Optional labels for flow metadata.
     flow_labels: Option<Map<String, Value>>,
-    /// Whether Kubernetes features are enabled.
-    k8s_enabled: bool,
-    /// Kubernetes namespace for resources.
-    k8s_namespace: Option<String>,
-    /// Whether metrics collection is enabled.
-    metrics_enabled: bool,
+    /// Optional host client for coordination.
+    host: Option<HostClient>,
 }
 
 impl TaskContextBuilder {
     /// Creates a new TaskContextBuilder with default values.
     pub fn new() -> Self {
-        Self {
-            k8s_enabled: false,
-            metrics_enabled: true,
-            ..Default::default()
-        }
+        Self::default()
     }
 
     /// Sets the unique flow name.
@@ -72,30 +91,12 @@ impl TaskContextBuilder {
         self
     }
 
-    /// Sets whether Kubernetes features are enabled.
+    /// Sets the host client for coordination.
     ///
     /// # Arguments
-    /// * `enabled` - Whether to enable Kubernetes coordination features
-    pub fn k8s_enabled(mut self, enabled: bool) -> Self {
-        self.k8s_enabled = enabled;
-        self
-    }
-
-    /// Sets the Kubernetes namespace for resources.
-    ///
-    /// # Arguments
-    /// * `namespace` - Optional namespace for Kubernetes resources
-    pub fn k8s_namespace(mut self, namespace: Option<String>) -> Self {
-        self.k8s_namespace = namespace;
-        self
-    }
-
-    /// Sets whether metrics collection is enabled.
-    ///
-    /// # Arguments
-    /// * `enabled` - Whether to enable metrics collection
-    pub fn metrics_enabled(mut self, enabled: bool) -> Self {
-        self.metrics_enabled = enabled;
+    /// * `host` - Optional host client for distributed coordination
+    pub fn host(mut self, host: Option<HostClient>) -> Self {
+        self.host = host;
         self
     }
 
@@ -105,13 +106,13 @@ impl TaskContextBuilder {
     /// Returns `Error::MissingRequiredAttribute` if required fields are not set.
     pub fn build(self) -> Result<TaskContext, Error> {
         Ok(TaskContext {
-            flow_name: self
-                .flow_name
-                .ok_or_else(|| Error::MissingRequiredAttribute("flow_name".to_string()))?,
-            flow_labels: self.flow_labels,
-            k8s_enabled: self.k8s_enabled,
-            k8s_namespace: self.k8s_namespace,
-            metrics_enabled: self.metrics_enabled,
+            flow: FlowOptions {
+                name: self
+                    .flow_name
+                    .ok_or_else(|| Error::MissingRequiredAttribute("flow_name".to_string()))?,
+                labels: self.flow_labels,
+            },
+            host: self.host,
         })
     }
 }
@@ -125,9 +126,6 @@ mod tests {
         let builder = TaskContextBuilder::new();
         assert!(builder.flow_name.is_none());
         assert!(builder.flow_labels.is_none());
-        assert!(!builder.k8s_enabled);
-        assert!(builder.k8s_namespace.is_none());
-        assert!(builder.metrics_enabled);
     }
 
     #[test]
@@ -139,17 +137,11 @@ mod tests {
         let context = TaskContextBuilder::new()
             .flow_name("test-flow".to_string())
             .flow_labels(Some(labels.clone()))
-            .k8s_enabled(true)
-            .k8s_namespace(Some("flowgen".to_string()))
-            .metrics_enabled(false)
             .build()
             .unwrap();
 
-        assert_eq!(context.flow_name, "test-flow");
-        assert_eq!(context.flow_labels, Some(labels));
-        assert!(context.k8s_enabled);
-        assert_eq!(context.k8s_namespace, Some("flowgen".to_string()));
-        assert!(!context.metrics_enabled);
+        assert_eq!(context.flow.name, "test-flow");
+        assert_eq!(context.flow.labels, Some(labels));
     }
 
     #[test]
@@ -173,11 +165,8 @@ mod tests {
             .build()
             .unwrap();
 
-        assert_eq!(context.flow_name, "default-test");
-        assert!(context.flow_labels.is_none());
-        assert!(!context.k8s_enabled);
-        assert!(context.k8s_namespace.is_none());
-        assert!(context.metrics_enabled);
+        assert_eq!(context.flow.name, "default-test");
+        assert!(context.flow.labels.is_none());
     }
 
     #[test]
@@ -192,17 +181,11 @@ mod tests {
         let context = TaskContextBuilder::new()
             .flow_name("chain-test".to_string())
             .flow_labels(Some(labels.clone()))
-            .k8s_enabled(true)
-            .k8s_namespace(Some("test-namespace".to_string()))
-            .metrics_enabled(true)
             .build()
             .unwrap();
 
-        assert_eq!(context.flow_name, "chain-test");
-        assert_eq!(context.flow_labels, Some(labels));
-        assert!(context.k8s_enabled);
-        assert_eq!(context.k8s_namespace, Some("test-namespace".to_string()));
-        assert!(context.metrics_enabled);
+        assert_eq!(context.flow.name, "chain-test");
+        assert_eq!(context.flow.labels, Some(labels));
     }
 
     #[test]
@@ -220,8 +203,7 @@ mod tests {
             .unwrap();
 
         let cloned = context.clone();
-        assert_eq!(context.flow_name, cloned.flow_name);
-        assert_eq!(context.flow_labels, cloned.flow_labels);
-        assert_eq!(context.k8s_enabled, cloned.k8s_enabled);
+        assert_eq!(context.flow.name, cloned.flow.name);
+        assert_eq!(context.flow.labels, cloned.flow.labels);
     }
 }

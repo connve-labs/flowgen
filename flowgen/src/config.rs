@@ -60,10 +60,12 @@ pub enum Task {
 pub struct AppConfig {
     /// Optional cache configuration.
     pub cache: Option<CacheOptions>,
-    /// Flow discovery and loading options.
+    /// Flow discovery options.
     pub flows: FlowOptions,
     /// Optional HTTP server configuration.
     pub http: Option<HttpOptions>,
+    /// Optional host coordination configuration.
+    pub host: Option<HostOptions>,
 }
 
 /// Cache configuration options.
@@ -87,6 +89,23 @@ pub struct FlowOptions {
 pub struct HttpOptions {
     /// Optional HTTP server port number (defaults to 3000).
     pub port: Option<u16>,
+}
+
+/// Host type for coordination.
+#[derive(PartialEq, Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HostType {
+    /// Kubernetes host.
+    K8s,
+}
+
+/// Host coordination configuration options.
+#[derive(PartialEq, Clone, Debug, Deserialize, Serialize)]
+pub struct HostOptions {
+    /// Host type for coordination.
+    pub host_type: HostType,
+    /// Optional namespace for Kubernetes resources.
+    pub namespace: Option<String>,
 }
 
 #[cfg(test)]
@@ -213,12 +232,14 @@ mod tests {
                 dir: Some(PathBuf::from("/test/flows/*")),
             },
             http: None,
+            host: None,
         };
 
         assert!(app_config.cache.is_some());
         assert!(app_config.cache.as_ref().unwrap().enabled);
         assert!(app_config.flows.dir.is_some());
         assert!(app_config.http.is_none());
+        assert!(app_config.host.is_none());
     }
 
     #[test]
@@ -229,6 +250,7 @@ mod tests {
                 dir: Some(PathBuf::from("/flows/*")),
             },
             http: None,
+            host: None,
         };
 
         assert!(app_config.cache.is_none());
@@ -246,6 +268,7 @@ mod tests {
                 dir: Some(PathBuf::from("/serialize/flows/*")),
             },
             http: None,
+            host: None,
         };
 
         let serialized = serde_json::to_string(&app_config).unwrap();
@@ -262,6 +285,7 @@ mod tests {
             }),
             flows: FlowOptions { dir: None },
             http: None,
+            host: None,
         };
 
         let cloned = app_config.clone();
@@ -389,6 +413,7 @@ mod tests {
             cache: None,
             flows: FlowOptions { dir: None },
             http: Some(HttpOptions { port: Some(8080) }),
+            host: None,
         };
 
         assert!(app_config.http.is_some());

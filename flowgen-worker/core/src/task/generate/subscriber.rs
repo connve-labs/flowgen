@@ -36,6 +36,9 @@ pub enum Error {
     /// System time error when getting current timestamp.
     #[error(transparent)]
     SystemTime(#[from] std::time::SystemTimeError),
+    /// Host coordination error.
+    #[error(transparent)]
+    Host(#[from] crate::host::Error),
 }
 /// Event generator that produces events at scheduled intervals.
 #[derive(Debug)]
@@ -57,10 +60,20 @@ impl<T: crate::cache::Cache> crate::task::runner::Runner for Subscriber<T> {
     async fn run(self) -> Result<(), Error> {
         let mut counter = 0;
 
+        // Create Kubernetes lease if host is configured.
+        if let Some(host_client) = &self.task_context.host {
+            let lease_name = format!(
+                "{}.{}.{}",
+                self.task_context.flow.name, DEFAULT_MESSAGE_SUBJECT, self.config.name
+            );
+
+            host_client.client.create_lease(&lease_name).await?;
+        }
+
         // Geberate a cache_key based on flow name and task name.
         let cache_key = format!(
-            "{task_context}.generate.{task_name}.last_run",
-            task_context = self.task_context.flow_name,
+            "{task_context}.{DEFAULT_MESSAGE_SUBJECT}.{task_name}.last_run",
+            task_context = self.task_context.flow.name,
             task_name = self.config.name
         );
 
@@ -231,8 +244,6 @@ mod tests {
             crate::task::context::TaskContextBuilder::new()
                 .flow_name("test-flow".to_string())
                 .flow_labels(Some(labels))
-                .k8s_enabled(false)
-                .metrics_enabled(true)
                 .build()
                 .unwrap(),
         )

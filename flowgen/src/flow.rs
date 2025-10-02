@@ -127,6 +127,8 @@ pub struct Flow<'a> {
     pub task_list: Option<Vec<JoinHandle<Result<(), Error>>>>,
     /// Shared HTTP server for webhook tasks.
     http_server: Arc<flowgen_http::server::HttpServer>,
+    /// Optional host client for coordination.
+    host: Option<Arc<flowgen_core::task::context::HostClient>>,
 }
 
 impl Flow<'_> {
@@ -153,8 +155,7 @@ impl Flow<'_> {
             flowgen_core::task::context::TaskContextBuilder::new()
                 .flow_name(self.config.flow.name.clone())
                 .flow_labels(self.config.flow.labels.clone())
-                .k8s_enabled(false) // TODO: read from app config when available.
-                .metrics_enabled(true)
+                .host(self.host.as_ref().map(|h| (**h).clone()))
                 .build()
                 .map_err(|e| Error::MissingRequiredAttribute(e.to_string()))?,
         );
@@ -486,6 +487,8 @@ pub struct FlowBuilder<'a> {
     cache_credentials_path: Option<&'a Path>,
     /// Optional shared HTTP server instance.
     http_server: Option<Arc<flowgen_http::server::HttpServer>>,
+    /// Optional host client for coordination.
+    host: Option<Arc<flowgen_core::task::context::HostClient>>,
 }
 
 impl<'a> FlowBuilder<'a> {
@@ -512,6 +515,12 @@ impl<'a> FlowBuilder<'a> {
         self
     }
 
+    /// Sets the host client for coordination.
+    pub fn host(mut self, client: Option<Arc<flowgen_core::task::context::HostClient>>) -> Self {
+        self.host = client;
+        self
+    }
+
     /// Builds a Flow instance from the configured options.
     ///
     /// # Errors
@@ -528,6 +537,7 @@ impl<'a> FlowBuilder<'a> {
             http_server: self
                 .http_server
                 .ok_or_else(|| Error::MissingRequiredAttribute("http_server".to_string()))?,
+            host: self.host,
         })
     }
 }

@@ -13,6 +13,8 @@ pub mod client;
 pub mod config;
 /// Event system with data formats, subject generation, and logging.
 pub mod event;
+/// Host coordination and lease management.
+pub mod host;
 /// Custom serialization and deserialization utilities.
 pub mod serde;
 /// Service discovery and connection management.
