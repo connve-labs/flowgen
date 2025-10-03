@@ -39,6 +39,9 @@ pub enum Error {
     /// Host coordination error.
     #[error(transparent)]
     Host(#[from] crate::host::Error),
+    /// Task manager error.
+    #[error(transparent)]
+    TaskManager(#[from] crate::task::manager::Error),
 }
 /// Event generator that produces events at scheduled intervals.
 #[derive(Debug)]
@@ -60,15 +63,18 @@ impl<T: crate::cache::Cache> crate::task::runner::Runner for Subscriber<T> {
     async fn run(self) -> Result<(), Error> {
         let mut counter = 0;
 
-        // Create Kubernetes lease if host is configured.
-        if let Some(host_client) = &self.task_context.host {
-            let lease_name = format!(
-                "{}.{}.{}",
-                self.task_context.flow.name, DEFAULT_MESSAGE_SUBJECT, self.config.name
-            );
-
-            host_client.client.create_lease(&lease_name).await?;
-        }
+        // Register task with task manager.
+        let task_id = format!(
+            "{}.{}.{}",
+            self.task_context.flow.name, DEFAULT_MESSAGE_SUBJECT, self.config.name
+        );
+        self.task_context
+            .task_manager
+            .register(
+                task_id,
+                Some(crate::task::manager::LeaderElectionOptions {}),
+            )
+            .await?;
 
         // Geberate a cache_key based on flow name and task name.
         let cache_key = format!(

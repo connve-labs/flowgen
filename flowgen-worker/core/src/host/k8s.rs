@@ -12,7 +12,7 @@ use kube::{
     Client,
 };
 use std::sync::Arc;
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 
 /// Default namespace for Kubernetes resources.
 const DEFAULT_NAMESPACE: &str = "default";

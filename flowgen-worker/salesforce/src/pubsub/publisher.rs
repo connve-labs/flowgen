@@ -52,6 +52,12 @@ pub enum Error {
     /// Failed to parse Avro schema from JSON string.
     #[error("Error parsing Schema Json string to Schema type")]
     SchemaParse(),
+    /// Host coordination error.
+    #[error(transparent)]
+    Host(#[from] flowgen_core::host::Error),
+    /// Task manager error.
+    #[error(transparent)]
+    TaskManager(#[from] flowgen_core::task::manager::Error),
 }
 
 /// Salesforce Pub/Sub publisher that receives events and publishes them to configured topics.
@@ -70,6 +76,19 @@ pub struct Publisher {
 impl flowgen_core::task::runner::Runner for Publisher {
     type Error = Error;
     async fn run(mut self) -> Result<(), Self::Error> {
+        // Register task with task manager.
+        let task_id = format!(
+            "{}.{}.{}",
+            self.task_context.flow.name, DEFAULT_MESSAGE_SUBJECT, self.config.name
+        );
+        self.task_context
+            .task_manager
+            .register(
+                task_id,
+                Some(flowgen_core::task::manager::LeaderElectionOptions {}),
+            )
+            .await?;
+
         let config = self.config.as_ref();
         let a = Path::new(&config.credentials);
 

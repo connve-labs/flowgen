@@ -51,6 +51,12 @@ pub enum Error {
     /// JSON serialization or deserialization error.
     #[error(transparent)]
     Serde(#[from] serde_json::Error),
+    /// Host coordination error.
+    #[error(transparent)]
+    Host(#[from] flowgen_core::host::Error),
+    /// Task manager error.
+    #[error(transparent)]
+    TaskManager(#[from] flowgen_core::task::manager::Error),
 }
 
 /// Processes events from a single Salesforce Pub/Sub topic.
@@ -239,6 +245,19 @@ impl<T: Cache> flowgen_core::task::runner::Runner for Subscriber<T> {
     /// Establishes Salesforce connection, authenticates, and spawns a
     /// TopicListener task for each configured topic.
     async fn run(self) -> Result<(), Error> {
+        // Register task with task manager.
+        let task_id = format!(
+            "{}.{}.{}",
+            self.task_context.flow.name, DEFAULT_MESSAGE_SUBJECT, self.config.name
+        );
+        self.task_context
+            .task_manager
+            .register(
+                task_id,
+                Some(flowgen_core::task::manager::LeaderElectionOptions {}),
+            )
+            .await?;
+
         // Determine Pub/Sub endpoint
         let endpoint = match &self.config.endpoint {
             Some(endpoint) => endpoint,

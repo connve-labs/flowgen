@@ -52,6 +52,12 @@ pub enum Error {
     NoFileExtension(),
     #[error("Cache errors")]
     Cache(),
+    /// Host coordination error.
+    #[error(transparent)]
+    Host(#[from] flowgen_core::host::Error),
+    /// Task manager error.
+    #[error(transparent)]
+    TaskManager(#[from] flowgen_core::task::manager::Error),
 }
 
 /// Handles processing of individual events by writing them to object storage.
@@ -170,6 +176,19 @@ impl<T: Cache> flowgen_core::task::runner::Runner for Reader<T> {
     type Error = Error;
 
     async fn run(mut self) -> Result<(), Self::Error> {
+        // Register task with task manager.
+        let task_id = format!(
+            "{}.{}.{}",
+            self.task_context.flow.name, DEFAULT_MESSAGE_SUBJECT, self.config.name
+        );
+        self.task_context
+            .task_manager
+            .register(
+                task_id,
+                Some(flowgen_core::task::manager::LeaderElectionOptions {}),
+            )
+            .await?;
+
         // Build object store client with conditional configuration
         let mut client_builder = super::client::ClientBuilder::new().path(self.config.path.clone());
 

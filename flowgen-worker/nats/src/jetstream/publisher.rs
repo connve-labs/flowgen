@@ -6,6 +6,9 @@ use std::{sync::Arc, time::Duration};
 use tokio::sync::{broadcast::Receiver, Mutex};
 use tracing::{event, Level};
 
+/// Default subject prefix for NATS publisher.
+const DEFAULT_MESSAGE_SUBJECT: &str = "nats.jetstream.publisher";
+
 /// Errors that can occur during NATS JetStream publishing operations.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -33,6 +36,12 @@ pub enum Error {
     /// Client was not properly initialized or is missing.
     #[error("Client is missing or not initialized properly")]
     MissingClient(),
+    /// Host coordination error.
+    #[error(transparent)]
+    Host(#[from] flowgen_core::host::Error),
+    /// Task manager error.
+    #[error(transparent)]
+    TaskManager(#[from] flowgen_core::task::manager::Error),
 }
 
 struct EventHandler {
@@ -70,6 +79,19 @@ pub struct Publisher {
 impl flowgen_core::task::runner::Runner for Publisher {
     type Error = Error;
     async fn run(mut self) -> Result<(), Self::Error> {
+        // Register task with task manager.
+        let task_id = format!(
+            "{}.{}.{}",
+            self.task_context.flow.name, DEFAULT_MESSAGE_SUBJECT, self.config.name
+        );
+        self.task_context
+            .task_manager
+            .register(
+                task_id,
+                Some(flowgen_core::task::manager::LeaderElectionOptions {}),
+            )
+            .await?;
+
         let client = crate::client::ClientBuilder::new()
             .credentials_path(self.config.credentials.clone())
             .build()?

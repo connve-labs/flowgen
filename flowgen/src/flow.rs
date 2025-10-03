@@ -150,12 +150,19 @@ impl Flow<'_> {
             .map_err(Error::Cache)?;
         let cache = Arc::new(cache);
 
+        // Create task manager with host if available.
+        let mut task_manager = flowgen_core::task::manager::TaskManagerBuilder::new();
+        if let Some(ref host) = self.host {
+            task_manager = task_manager.host(host.client.clone());
+        }
+        let task_manager = Arc::new(task_manager.build().start().await);
+
         // Create task context for execution.
         let task_context = Arc::new(
             flowgen_core::task::context::TaskContextBuilder::new()
                 .flow_name(self.config.flow.name.clone())
                 .flow_labels(self.config.flow.labels.clone())
-                .host(self.host.as_ref().map(|h| (**h).clone()))
+                .task_manager(task_manager)
                 .build()
                 .map_err(|e| Error::MissingRequiredAttribute(e.to_string()))?,
         );

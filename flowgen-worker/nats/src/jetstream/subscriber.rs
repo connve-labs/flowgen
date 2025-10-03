@@ -9,6 +9,9 @@ use tokio::{sync::broadcast::Sender, time};
 use tokio_stream::StreamExt;
 use tracing::{event, Level};
 
+/// Default subject prefix for NATS subscriber.
+const DEFAULT_MESSAGE_SUBJECT: &str = "nats.jetstream.subscriber";
+
 /// Errors that can occur during NATS JetStream subscription operations.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -55,6 +58,12 @@ pub enum Error {
     /// General subscriber error for wrapped external errors.
     #[error("Other error with subscriber")]
     Other(#[source] Box<dyn std::error::Error + Send + Sync>),
+    /// Host coordination error.
+    #[error(transparent)]
+    Host(#[from] flowgen_core::host::Error),
+    /// Task manager error.
+    #[error(transparent)]
+    TaskManager(#[from] flowgen_core::task::manager::Error),
 }
 
 /// NATS JetStream subscriber that consumes messages and converts them to flowgen events.
@@ -73,6 +82,19 @@ pub struct Subscriber {
 impl flowgen_core::task::runner::Runner for Subscriber {
     type Error = Error;
     async fn run(self) -> Result<(), Error> {
+        // Register task with task manager.
+        let task_id = format!(
+            "{}.{}.{}",
+            self.task_context.flow.name, DEFAULT_MESSAGE_SUBJECT, self.config.name
+        );
+        self.task_context
+            .task_manager
+            .register(
+                task_id,
+                Some(flowgen_core::task::manager::LeaderElectionOptions {}),
+            )
+            .await?;
+
         let client = crate::client::ClientBuilder::new()
             .credentials_path(self.config.credentials.clone())
             .build()?

@@ -30,7 +30,7 @@ pub enum SubjectSuffix<'a> {
 ///
 /// # Arguments
 /// * `task_name` - The required name of the task, used as the middle component of the subject.
-///                 It is automatically converted to lowercase.
+///   It is automatically converted to lowercase.
 /// * `base_subject` - The fixed base prefix for the subject string (e.g., a service or stream name).
 /// * `suffix` - The dynamic suffix type (timestamp or a custom ID).
 ///

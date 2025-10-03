@@ -59,6 +59,12 @@ pub enum Error {
     /// Payload configuration is invalid.
     #[error("Either payload json or payload input is required")]
     PayloadConfig(),
+    /// Host coordination error.
+    #[error(transparent)]
+    Host(#[from] flowgen_core::host::Error),
+    /// Task manager error.
+    #[error(transparent)]
+    TaskManager(#[from] flowgen_core::task::manager::Error),
 }
 
 /// Event handler for processing HTTP requests.
@@ -172,6 +178,19 @@ pub struct Processor {
 impl flowgen_core::task::runner::Runner for Processor {
     type Error = Error;
     async fn run(mut self) -> Result<(), Error> {
+        // Register task with task manager.
+        let task_id = format!(
+            "{}.{}.{}",
+            self.task_context.flow.name, DEFAULT_MESSAGE_SUBJECT, self.config.name
+        );
+        self.task_context
+            .task_manager
+            .register(
+                task_id,
+                Some(flowgen_core::task::manager::LeaderElectionOptions {}),
+            )
+            .await?;
+
         let client = reqwest::ClientBuilder::new().https_only(true).build()?;
 
         let client = Arc::new(client);

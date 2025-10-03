@@ -53,6 +53,9 @@ pub enum Error {
     /// Required configuration attribute is missing.
     #[error("Missing required attribute: {}", _0)]
     MissingRequiredAttribute(String),
+    /// Task manager error.
+    #[error(transparent)]
+    TaskManager(#[from] flowgen_core::task::manager::Error),
 }
 
 impl IntoResponse for Error {
@@ -201,6 +204,16 @@ pub struct Processor {
 impl flowgen_core::task::runner::Runner for Processor {
     type Error = Error;
     async fn run(self) -> Result<(), Error> {
+        // Register task with task manager.
+        let task_id = format!(
+            "{}.{}.{}",
+            self.task_context.flow.name, DEFAULT_MESSAGE_SUBJECT, self.config.name
+        );
+        self.task_context
+            .task_manager
+            .register(task_id, None)
+            .await?;
+
         let config = Arc::clone(&self.config);
 
         // Load credentials at task creation time

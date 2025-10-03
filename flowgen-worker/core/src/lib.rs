@@ -39,4 +39,5 @@ pub mod task {
         /// Processor implementation for convert tasks.
         pub mod processor;
     }
+    pub mod manager;
 }

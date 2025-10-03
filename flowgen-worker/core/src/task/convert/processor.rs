@@ -36,6 +36,12 @@ pub enum Error {
     /// Required builder attribute was not provided.
     #[error("Missing required attribute: {}", _0)]
     MissingRequiredAttribute(String),
+    /// Host coordination error.
+    #[error(transparent)]
+    Host(#[from] crate::host::Error),
+    /// Task manager error.
+    #[error(transparent)]
+    TaskManager(#[from] crate::task::manager::Error),
 }
 
 /// Transforms JSON object keys by replacing hyphens with underscores.
@@ -139,6 +145,19 @@ pub struct Processor {
 impl super::super::runner::Runner for Processor {
     type Error = Error;
     async fn run(mut self) -> Result<(), Error> {
+        // Register task with task manager.
+        let task_id = format!(
+            "{}.{}.{}",
+            self.task_context.flow.name, DEFAULT_MESSAGE_SUBJECT, self.config.name
+        );
+        self.task_context
+            .task_manager
+            .register(
+                task_id,
+                Some(crate::task::manager::LeaderElectionOptions {}),
+            )
+            .await?;
+
         let serializer = match self.config.target_format {
             super::config::TargetFormat::Avro => {
                 let schema_string = self
@@ -163,7 +182,6 @@ impl super::super::runner::Runner for Processor {
                 }))
             }
         };
-
         while let Ok(event) = self.rx.recv().await {
             if event.current_task_id == Some(self.current_task_id - 1) {
                 let config = Arc::clone(&self.config);

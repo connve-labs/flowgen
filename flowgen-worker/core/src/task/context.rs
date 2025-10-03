@@ -28,8 +28,8 @@ pub struct FlowOptions {
 pub struct TaskContext {
     /// Flow identification and metadata.
     pub flow: FlowOptions,
-    /// Optional host client for coordination (e.g., lease management).
-    pub host: Option<HostClient>,
+    /// Task manager for centralized task lifecycle management.
+    pub task_manager: std::sync::Arc<crate::task::manager::TaskManager>,
 }
 
 /// Host client for distributed coordination.
@@ -43,7 +43,7 @@ impl std::fmt::Debug for TaskContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TaskContext")
             .field("flow", &self.flow)
-            .field("host", &self.host.is_some())
+            .field("task_manager", &"<TaskManager>")
             .finish()
     }
 }
@@ -63,8 +63,8 @@ pub struct TaskContextBuilder {
     flow_name: Option<String>,
     /// Optional labels for flow metadata.
     flow_labels: Option<Map<String, Value>>,
-    /// Optional host client for coordination.
-    host: Option<HostClient>,
+    /// Task manager for centralized task lifecycle management.
+    task_manager: Option<std::sync::Arc<crate::task::manager::TaskManager>>,
 }
 
 impl TaskContextBuilder {
@@ -91,12 +91,15 @@ impl TaskContextBuilder {
         self
     }
 
-    /// Sets the host client for coordination.
+    /// Sets the task manager for centralized task lifecycle management.
     ///
     /// # Arguments
-    /// * `host` - Optional host client for distributed coordination
-    pub fn host(mut self, host: Option<HostClient>) -> Self {
-        self.host = host;
+    /// * `task_manager` - Task manager instance
+    pub fn task_manager(
+        mut self,
+        task_manager: std::sync::Arc<crate::task::manager::TaskManager>,
+    ) -> Self {
+        self.task_manager = Some(task_manager);
         self
     }
 
@@ -112,7 +115,9 @@ impl TaskContextBuilder {
                     .ok_or_else(|| Error::MissingRequiredAttribute("flow_name".to_string()))?,
                 labels: self.flow_labels,
             },
-            host: self.host,
+            task_manager: self
+                .task_manager
+                .ok_or_else(|| Error::MissingRequiredAttribute("task_manager".to_string()))?,
         })
     }
 }
