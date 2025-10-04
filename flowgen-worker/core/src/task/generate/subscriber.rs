@@ -12,7 +12,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::{sync::broadcast::Sender, time};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// Default subject prefix for generated events.
 const DEFAULT_MESSAGE_SUBJECT: &str = "generate";
@@ -68,7 +68,7 @@ impl<T: crate::cache::Cache> crate::task::runner::Runner for Subscriber<T> {
             "{}.{}.{}",
             self.task_context.flow.name, DEFAULT_MESSAGE_SUBJECT, self.config.name
         );
-        let mut leadership_rx = self
+        let mut task_manager_rx = self
             .task_context
             .task_manager
             .register(
@@ -76,23 +76,6 @@ impl<T: crate::cache::Cache> crate::task::runner::Runner for Subscriber<T> {
                 Some(crate::task::manager::LeaderElectionOptions {}),
             )
             .await?;
-
-        // Wait for initial leadership status.
-        let initial_status = leadership_rx
-            .recv()
-            .await
-            .ok_or_else(|| Error::Cache("Failed to receive leadership status".to_string()))?;
-
-        match initial_status {
-            crate::task::manager::LeaderElectionResult::Leader
-            | crate::task::manager::LeaderElectionResult::NoElection => {
-                info!("Starting generate task {} as leader", self.config.name);
-            }
-            crate::task::manager::LeaderElectionResult::NotLeader => {
-                info!("Not leader for generate task {}, exiting", self.config.name);
-                return Ok(());
-            }
-        }
 
         // Generate a cache_key based on flow name and task name.
         let cache_key = format!(
@@ -106,22 +89,16 @@ impl<T: crate::cache::Cache> crate::task::runner::Runner for Subscriber<T> {
             tokio::select! {
                 biased;
 
-                // Priority: Check for leadership changes first.
-                Some(status) = leadership_rx.recv() => {
-                    match status {
-                        crate::task::manager::LeaderElectionResult::NotLeader => {
-                            info!("Lost leadership for generate task {}, exiting", self.config.name);
-                            return Ok(());
-                        }
-                        _ => {
-                            // Still leader or no election, continue.
-                        }
+                // Check for leadership election results.
+                Some(status) = task_manager_rx.recv() => {
+                    if status == crate::task::manager::LeaderElectionResult::NotLeader {
+                        debug!("Lost leadership for generate task {}, exiting", self.config.name);
+                        return Ok(());
                     }
                 }
 
                 // Continue with normal event generation logic.
                 _ = async {
-                    counter += 1;
                     // Calculate when the next event should be generated.
                     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
                     let next_run_time = match self.cache.get(&cache_key).await {
@@ -140,8 +117,8 @@ impl<T: crate::cache::Cache> crate::task::runner::Runner for Subscriber<T> {
                         let sleep_duration = next_run_time - now;
                         time::sleep(Duration::from_secs(sleep_duration)).await;
                     }
-                } => {
-
+                } =>
+            {
             // Prepare message data.
             let data = match &self.config.message {
                 Some(message) => json!(message),
@@ -175,6 +152,7 @@ impl<T: crate::cache::Cache> crate::task::runner::Runner for Subscriber<T> {
                 warn!("Failed to update cache: {:?}", cache_err);
             }
 
+                    counter += 1;
                     match self.config.count {
                         Some(count) if count == counter => return Ok(()),
                         Some(_) | None => {}
@@ -182,7 +160,6 @@ impl<T: crate::cache::Cache> crate::task::runner::Runner for Subscriber<T> {
                 }
             }
         }
-        Ok(())
     }
 }
 

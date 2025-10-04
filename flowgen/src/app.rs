@@ -69,8 +69,16 @@ impl flowgen_core::task::runner::Runner for App {
                     path: path.clone(),
                     source: e,
                 })?;
+
+                // Detect file format based on extension.
+                let file_format = match path.extension().and_then(|e| e.to_str()) {
+                    Some("yaml") | Some("yml") => config::FileFormat::Yaml,
+                    Some("json") => config::FileFormat::Json,
+                    _ => config::FileFormat::Json,
+                };
+
                 let config = Config::builder()
-                    .add_source(config::File::from_str(&contents, config::FileFormat::Json))
+                    .add_source(config::File::from_str(&contents, file_format))
                     .build()?;
                 Ok(config.try_deserialize::<FlowConfig>()?)
             })
