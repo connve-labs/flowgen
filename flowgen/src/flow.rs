@@ -24,7 +24,7 @@ pub enum Error {
     #[error("Flow: {flow}, task_id: {task_id}, source: {source}")]
     ConverProcessor {
         #[source]
-        source: Box<flowgen_core::task::convert::processor::Error>,
+        source: Box<flowgen_core::convert::processor::Error>,
         flow: String,
         task_id: usize,
     },
@@ -104,7 +104,7 @@ pub enum Error {
     #[error("Flow: {flow}, task_id: {task_id}, source: {source}")]
     GenerateSubscriber {
         #[source]
-        source: Box<flowgen_core::task::generate::subscriber::Error>,
+        source: Box<flowgen_core::generate::subscriber::Error>,
         flow: String,
         task_id: usize,
     },
@@ -176,7 +176,7 @@ impl Flow<'_> {
                     let flow_config = Arc::clone(&self.config);
                     let task_context = Arc::clone(&task_context);
                     let task: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
-                        flowgen_core::task::convert::processor::ProcessorBuilder::new()
+                        flowgen_core::convert::processor::ProcessorBuilder::new()
                             .config(config)
                             .receiver(rx)
                             .sender(tx)
@@ -208,7 +208,7 @@ impl Flow<'_> {
                     let cache = Arc::clone(&cache);
                     let task_context = Arc::clone(&task_context);
                     let task: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
-                        flowgen_core::task::generate::subscriber::SubscriberBuilder::new()
+                        flowgen_core::generate::subscriber::SubscriberBuilder::new()
                             .config(config)
                             .sender(tx)
                             .cache(cache)
@@ -709,7 +709,7 @@ mod tests {
 
     #[test]
     fn test_error_convert_processor() {
-        let convert_error = flowgen_core::task::convert::processor::Error::MissingRequiredAttribute(
+        let convert_error = flowgen_core::convert::processor::Error::MissingRequiredAttribute(
             "test".to_string(),
         );
         let error = Error::ConverProcessor {
