@@ -7,7 +7,7 @@ use flowgen_core::{client::Client, event::generate_subject};
 use object_store::PutPayload;
 use std::{path::PathBuf, sync::Arc};
 use tokio::sync::{broadcast::Receiver, Mutex};
-use tracing::{event, Level};
+use tracing::{debug, error, info};
 
 /// Default subject prefix for logging messages.
 const DEFAULT_MESSAGE_SUBJECT: &str = "object_store.writer.out";
@@ -15,6 +15,7 @@ const DEFAULT_MESSAGE_SUBJECT: &str = "object_store.writer.out";
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
 pub enum Error {
+    /// Input/output operation failed.
     #[error(transparent)]
     IO(#[from] std::io::Error),
     #[error(transparent)]
@@ -33,6 +34,12 @@ pub enum Error {
     MissingRequiredAttribute(String),
     #[error("Could not initialize object store context")]
     NoObjectStoreContext(),
+    /// Host coordination error.
+    #[error(transparent)]
+    Host(#[from] flowgen_core::host::Error),
+    /// Task manager error.
+    #[error(transparent)]
+    TaskManager(#[from] flowgen_core::task::manager::Error),
 }
 
 /// Handles processing of individual events by writing them to object storage.
@@ -45,7 +52,7 @@ struct EventHandler {
 
 impl EventHandler {
     /// Processes an event and writes it to the configured object store.
-    async fn handle(self, event: Event) -> Result<(), Error> {
+    async fn handle(&self, event: Event) -> Result<(), Error> {
         let mut client_guard = self.client.lock().await;
         let context = client_guard
             .context
@@ -93,7 +100,7 @@ impl EventHandler {
 
         // Generate event subject.
         let subject = generate_subject(
-            self.config.label.as_deref(),
+            &self.config.name,
             DEFAULT_MESSAGE_SUBJECT,
             SubjectSuffix::Timestamp,
         );
@@ -108,7 +115,7 @@ impl EventHandler {
             .subject(subject)
             .data(EventData::Json(data))
             .build()?;
-        event!(Level::INFO, "{}: {}", DEFAULT_LOG_MESSAGE, e.subject);
+        info!("{}: {}", DEFAULT_LOG_MESSAGE, e.subject);
         Ok(())
     }
 
@@ -132,12 +139,28 @@ pub struct Writer {
     rx: Receiver<Event>,
     /// Current task identifier for event filtering.
     current_task_id: usize,
+    /// Task execution context providing metadata and runtime configuration.
+    task_context: Arc<flowgen_core::task::context::TaskContext>,
 }
 
 impl flowgen_core::task::runner::Runner for Writer {
     type Error = Error;
 
     async fn run(mut self) -> Result<(), Self::Error> {
+        // Register task with task manager.
+        let task_id = format!(
+            "{}.{}.{}",
+            self.task_context.flow.name, DEFAULT_MESSAGE_SUBJECT, self.config.name
+        );
+        let mut task_manager_rx = self
+            .task_context
+            .task_manager
+            .register(
+                task_id,
+                Some(flowgen_core::task::manager::LeaderElectionOptions {}),
+            )
+            .await?;
+
         // Build object store client with conditional configuration
         let mut client_builder = super::client::ClientBuilder::new().path(self.config.path.clone());
 
@@ -150,20 +173,42 @@ impl flowgen_core::task::runner::Runner for Writer {
 
         let client = Arc::new(Mutex::new(client_builder.build()?.connect().await?));
 
+        let event_handler = Arc::new(EventHandler {
+            client,
+            config: Arc::clone(&self.config),
+        });
+
         // Process incoming events, filtering by task ID.
-        while let Ok(event) = self.rx.recv().await {
-            if event.current_task_id == Some(self.current_task_id - 1) {
-                let client = Arc::clone(&client);
-                let config = Arc::clone(&self.config);
-                let event_handler = EventHandler { client, config };
-                tokio::spawn(async move {
-                    if let Err(err) = event_handler.handle(event).await {
-                        event!(Level::ERROR, "{}", err);
+        loop {
+            tokio::select! {
+                biased;
+
+                // Check for leadership changes.
+                Some(status) = task_manager_rx.recv() => {
+                    if status == flowgen_core::task::manager::LeaderElectionResult::NotLeader {
+                        debug!("Lost leadership for task: {}", self.config.name);
+                        return Ok(());
                     }
-                });
+                }
+
+                // Process events.
+                result = self.rx.recv() => {
+                    match result {
+                        Ok(event) => {
+                            if event.current_task_id == Some(self.current_task_id - 1) {
+                                let handler = Arc::clone(&event_handler);
+                                tokio::spawn(async move {
+                                    if let Err(err) = handler.handle(event).await {
+                                        error!("{}", err);
+                                    }
+                                });
+                            }
+                        }
+                        Err(_) => return Ok(()),
+                    }
+                }
             }
         }
-        Ok(())
     }
 }
 
@@ -176,6 +221,8 @@ pub struct WriterBuilder {
     rx: Option<Receiver<Event>>,
     /// Current task identifier for event filtering.
     current_task_id: usize,
+    /// Task execution context providing metadata and runtime configuration.
+    task_context: Option<Arc<flowgen_core::task::context::TaskContext>>,
 }
 
 impl WriterBuilder {
@@ -203,6 +250,14 @@ impl WriterBuilder {
         self
     }
 
+    pub fn task_context(
+        mut self,
+        task_context: Arc<flowgen_core::task::context::TaskContext>,
+    ) -> Self {
+        self.task_context = Some(task_context);
+        self
+    }
+
     /// Builds the Writer instance, validating required fields.
     pub async fn build(self) -> Result<Writer, Error> {
         Ok(Writer {
@@ -213,6 +268,9 @@ impl WriterBuilder {
                 .rx
                 .ok_or_else(|| Error::MissingRequiredAttribute("receiver".to_string()))?,
             current_task_id: self.current_task_id,
+            task_context: self
+                .task_context
+                .ok_or_else(|| Error::MissingRequiredAttribute("task_context".to_string()))?,
         })
     }
 }
@@ -220,7 +278,7 @@ impl WriterBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{HivePartitionOptions, HiveParitionKeys};
+    use crate::config::{HiveParitionKeys, HivePartitionOptions};
     use std::path::PathBuf;
     use tokio::sync::broadcast;
 
@@ -235,7 +293,7 @@ mod tests {
     #[test]
     fn test_writer_builder_config() {
         let config = Arc::new(crate::config::Writer {
-            label: Some("test_writer".to_string()),
+            name: "test_writer".to_string(),
             path: PathBuf::from("s3://bucket/path/"),
             credentials: None,
             client_options: None,
@@ -244,7 +302,10 @@ mod tests {
 
         let builder = WriterBuilder::new().config(config.clone());
         assert!(builder.config.is_some());
-        assert_eq!(builder.config.unwrap().path, PathBuf::from("s3://bucket/path/"));
+        assert_eq!(
+            builder.config.unwrap().path,
+            PathBuf::from("s3://bucket/path/")
+        );
     }
 
     #[test]
@@ -270,13 +331,15 @@ mod tests {
             .await;
 
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "config"));
+        assert!(
+            matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "config")
+        );
     }
 
     #[tokio::test]
     async fn test_writer_builder_missing_receiver() {
         let config = Arc::new(crate::config::Writer {
-            label: Some("test".to_string()),
+            name: "test_writer".to_string(),
             path: PathBuf::from("/tmp/output/"),
             credentials: None,
             client_options: None,
@@ -290,13 +353,15 @@ mod tests {
             .await;
 
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "receiver"));
+        assert!(
+            matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "receiver")
+        );
     }
 
     #[tokio::test]
     async fn test_writer_builder_build_success() {
         let config = Arc::new(crate::config::Writer {
-            label: Some("complete_writer".to_string()),
+            name: "test_writer".to_string(),
             path: PathBuf::from("gs://my-bucket/data/"),
             credentials: Some(PathBuf::from("/service-account.json")),
             client_options: None,
@@ -330,7 +395,7 @@ mod tests {
     fn test_event_handler_structure() {
         // Test that EventHandler can be constructed with the right types
         let config = Arc::new(crate::config::Writer {
-            label: None,
+            name: "test_writer".to_string(),
             path: PathBuf::from("/tmp/"),
             credentials: None,
             client_options: None,
@@ -341,7 +406,7 @@ mod tests {
             crate::client::ClientBuilder::new()
                 .path(PathBuf::from("/tmp/"))
                 .build()
-                .unwrap()
+                .unwrap(),
         ));
 
         // We can't actually create an EventHandler here because it's private,
@@ -352,7 +417,7 @@ mod tests {
     #[test]
     fn test_writer_builder_chain() {
         let config = Arc::new(crate::config::Writer {
-            label: Some("chain_test".to_string()),
+            name: "test_writer".to_string(),
             path: PathBuf::from("file:///data/output/"),
             credentials: None,
             client_options: None,
