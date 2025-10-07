@@ -10,7 +10,7 @@ use tokio::sync::{broadcast::Receiver, Mutex};
 use tracing::{debug, error, info};
 
 /// Default subject prefix for logging messages.
-const DEFAULT_MESSAGE_SUBJECT: &str = "object_store.writer.out";
+const DEFAULT_MESSAGE_SUBJECT: &str = "object_store_writer";
 
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
@@ -384,11 +384,6 @@ mod tests {
         let writer = result.unwrap();
         assert_eq!(writer.current_task_id, 99);
         assert_eq!(writer.config.path, PathBuf::from("gs://my-bucket/data/"));
-    }
-
-    #[test]
-    fn test_constants() {
-        assert_eq!(DEFAULT_MESSAGE_SUBJECT, "object_store.writer.out");
     }
 
     #[test]

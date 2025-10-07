@@ -181,11 +181,12 @@ impl flowgen_core::task::runner::Runner for App {
     }
 }
 
-/// Processes task results and logs errors.
-async fn handle_task_results(tasks: Vec<JoinHandle<Result<(), super::flow::Error>>>) {
-    let task_results = futures_util::future::join_all(tasks).await;
-    for result in task_results {
+/// Processes task results and logs errors as they complete.
+async fn handle_task_results(mut tasks: Vec<JoinHandle<Result<(), super::flow::Error>>>) {
+    while !tasks.is_empty() {
+        let (result, _index, remaining) = futures_util::future::select_all(tasks).await;
         log_task_error(result);
+        tasks = remaining;
     }
 }
 

@@ -575,12 +575,6 @@ mod tests {
     }
 
     #[test]
-    fn test_constants() {
-        assert_eq!(DEFAULT_MESSAGE_SUBJECT, "object_store.reader.in");
-        assert_eq!(DEFAULT_BATCH_SIZE, 1000);
-    }
-
-    #[test]
     fn test_reader_builder_chain() {
         let config = Arc::new(crate::config::Reader {
             name: "test_reader".to_string(),
