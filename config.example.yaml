@@ -11,4 +11,3 @@ http:
 # Host coordination configuration (optional).
 host:
   host_type: k8s
-  namespace: default

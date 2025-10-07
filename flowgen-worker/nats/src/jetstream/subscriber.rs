@@ -10,7 +10,7 @@ use tokio_stream::StreamExt;
 use tracing::{debug, info};
 
 /// Default subject prefix for NATS subscriber.
-const DEFAULT_MESSAGE_SUBJECT: &str = "nats.jetstream.subscriber";
+const DEFAULT_MESSAGE_SUBJECT: &str = "nats_jetstream_subscriber";
 
 /// Errors that can occur during NATS JetStream subscription operations.
 #[derive(thiserror::Error, Debug)]
@@ -382,11 +382,18 @@ mod tests {
         });
         let (tx, _rx) = broadcast::channel(1);
 
+        let task_context = Arc::new(
+            flowgen_core::task::context::TaskContextBuilder::new()
+                .flow_name("test-flow".to_string())
+                .build()
+                .unwrap(),
+        );
+
         let subscriber = Subscriber {
             config: config.clone(),
             tx,
             current_task_id: 0,
-            task_context: todo!(),
+            task_context,
         };
 
         assert_eq!(subscriber.config, config);

@@ -16,7 +16,7 @@ use tokio::sync::broadcast::Sender;
 use tracing::{error, info};
 
 /// Default subject for webhook events.
-const DEFAULT_MESSAGE_SUBJECT: &str = "http.webhook.in";
+const DEFAULT_MESSAGE_SUBJECT: &str = "http_webhook";
 /// JSON key for HTTP headers in webhook events.
 const DEFAULT_HEADERS_KEY: &str = "headers";
 /// JSON key for HTTP payload in webhook events.
@@ -144,7 +144,10 @@ impl EventHandler {
 
         // Validate the authentication and return error if request is not authorized.
         if let Err(auth_error) = self.validate_authentication(&headers) {
-            error!("Webhook authentication failed for {}: {}", subject, auth_error);
+            error!(
+                "Webhook authentication failed for {}: {}",
+                subject, auth_error
+            );
             return Ok(StatusCode::UNAUTHORIZED);
         }
 
@@ -155,14 +158,19 @@ impl EventHandler {
             false => serde_json::from_slice(&body)?,
         };
 
-        let headers_map = Map::new();
-        // Temporarly turn of headers.
-        // for (key, value) in headers.iter() {
-        //     headers_map.insert(
-        //         key.as_str().to_string(),
-        //         Value::String(value.to_str().unwrap_or("").to_string()),
-        //     );
-        // }
+        // Only store headers that are specified in the configuration.
+        let mut headers_map = Map::new();
+        if let Some(configured_headers) = &self.config.headers {
+            for (key, value) in headers.iter() {
+                let header_name = key.as_str();
+                if configured_headers.contains_key(header_name) {
+                    headers_map.insert(
+                        header_name.to_string(),
+                        Value::String(value.to_str().unwrap_or("").to_string()),
+                    );
+                }
+            }
+        }
 
         let data = json!({
             DEFAULT_HEADERS_KEY: Value::Object(headers_map),
@@ -323,22 +331,6 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
     use tokio::sync::broadcast;
-
-    /// Creates a mock TaskContext for testing.
-    fn create_mock_task_context() -> Arc<flowgen_core::task::context::TaskContext> {
-        let mut labels = Map::new();
-        labels.insert(
-            "description".to_string(),
-            Value::String("Clone Test".to_string()),
-        );
-        Arc::new(
-            flowgen_core::task::context::TaskContextBuilder::new()
-                .flow_name("test-flow".to_string())
-                .flow_labels(Some(labels))
-                .build()
-                .unwrap(),
-        )
-    }
 
     #[test]
     fn test_error_from_serde_json_error() {
@@ -568,5 +560,59 @@ mod tests {
             current_task_id: 0,
             credentials: None,
         };
+    }
+
+    #[test]
+    fn test_event_handler_with_configured_headers() {
+        let mut configured_headers = HashMap::new();
+        configured_headers.insert("x-custom-header".to_string(), "".to_string());
+        configured_headers.insert("x-request-id".to_string(), "".to_string());
+
+        let config = Arc::new(crate::config::Processor {
+            name: "test_webhook".to_string(),
+            endpoint: "/webhook".to_string(),
+            method: crate::config::Method::POST,
+            payload: None,
+            headers: Some(configured_headers),
+            credentials: None,
+        });
+
+        let (tx, _rx) = broadcast::channel(100);
+
+        let handler = EventHandler {
+            config,
+            tx,
+            current_task_id: 1,
+            credentials: None,
+        };
+
+        assert!(handler.config.headers.is_some());
+        let headers = handler.config.headers.as_ref().unwrap();
+        assert_eq!(headers.len(), 2);
+        assert!(headers.contains_key("x-custom-header"));
+        assert!(headers.contains_key("x-request-id"));
+    }
+
+    #[test]
+    fn test_event_handler_without_configured_headers() {
+        let config = Arc::new(crate::config::Processor {
+            name: "test_webhook".to_string(),
+            endpoint: "/webhook".to_string(),
+            method: crate::config::Method::POST,
+            payload: None,
+            headers: None,
+            credentials: None,
+        });
+
+        let (tx, _rx) = broadcast::channel(100);
+
+        let handler = EventHandler {
+            config,
+            tx,
+            current_task_id: 1,
+            credentials: None,
+        };
+
+        assert!(handler.config.headers.is_none());
     }
 }

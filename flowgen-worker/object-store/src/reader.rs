@@ -17,7 +17,7 @@ use tokio::sync::{
 use tracing::{debug, error, info, warn};
 
 /// Default subject prefix for logging messages.
-const DEFAULT_MESSAGE_SUBJECT: &str = "object_store.reader.in";
+const DEFAULT_MESSAGE_SUBJECT: &str = "object_store_reader";
 /// Default batch size for files.
 const DEFAULT_BATCH_SIZE: usize = 1000;
 /// Default files have headers.

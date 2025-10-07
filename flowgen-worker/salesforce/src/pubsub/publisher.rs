@@ -12,7 +12,7 @@ use std::{path::Path, sync::Arc};
 use tokio::sync::{broadcast::Receiver, Mutex};
 use tracing::{debug, info};
 
-const DEFAULT_MESSAGE_SUBJECT: &str = "salesforce.pubsub.out";
+const DEFAULT_MESSAGE_SUBJECT: &str = "salesforce_pubsub_publisher";
 const DEFAULT_PUBSUB_URI: &str = "https://api.pubsub.salesforce.com";
 const DEFAULT_PUBSUB_PORT: &str = "443";
 

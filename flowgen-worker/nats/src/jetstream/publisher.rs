@@ -7,7 +7,7 @@ use tokio::sync::{broadcast::Receiver, Mutex};
 use tracing::{debug, error, info};
 
 /// Default subject prefix for NATS publisher.
-const DEFAULT_MESSAGE_SUBJECT: &str = "nats.jetstream.publisher";
+const DEFAULT_MESSAGE_SUBJECT: &str = "nats_jetstream_publisher";
 
 /// Errors that can occur during NATS JetStream publishing operations.
 #[derive(thiserror::Error, Debug)]
@@ -136,9 +136,7 @@ impl flowgen_core::task::runner::Runner for Publisher {
 
             let jetstream = Arc::new(Mutex::new(jetstream));
 
-            let event_handler = Arc::new(EventHandler {
-                jetstream,
-            });
+            let event_handler = Arc::new(EventHandler { jetstream });
 
             loop {
                 tokio::select! {

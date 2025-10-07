@@ -19,7 +19,7 @@ use tokio::{
 use tracing::{debug, error, info};
 
 /// Default subject for HTTP response events.
-const DEFAULT_MESSAGE_SUBJECT: &str = "http.response.out";
+const DEFAULT_MESSAGE_SUBJECT: &str = "http_request";
 
 /// Errors that can occur during HTTP request processing.
 #[derive(thiserror::Error, Debug)]

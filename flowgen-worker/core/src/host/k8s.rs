@@ -75,6 +75,17 @@ pub struct K8sHost {
     holder_identity: String,
 }
 
+impl std::fmt::Debug for K8sHost {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("K8sHost")
+            .field("client", &self.client.as_ref().map(|_| "Client"))
+            .field("namespace", &self.namespace)
+            .field("lease_duration_secs", &self.lease_duration_secs)
+            .field("holder_identity", &self.holder_identity)
+            .finish()
+    }
+}
+
 impl FlowgenClient for K8sHost {
     type Error = Error;
 
@@ -220,7 +231,11 @@ impl Host for K8sHost {
         }
     }
 
-    async fn delete_lease(&self, name: &str, namespace: Option<&str>) -> Result<(), crate::host::Error> {
+    async fn delete_lease(
+        &self,
+        name: &str,
+        namespace: Option<&str>,
+    ) -> Result<(), crate::host::Error> {
         let namespace = namespace.unwrap_or(&self.namespace);
         let client = self
             .client
@@ -236,7 +251,11 @@ impl Host for K8sHost {
         Ok(())
     }
 
-    async fn renew_lease(&self, name: &str, namespace: Option<&str>) -> Result<(), crate::host::Error> {
+    async fn renew_lease(
+        &self,
+        name: &str,
+        namespace: Option<&str>,
+    ) -> Result<(), crate::host::Error> {
         let namespace = namespace.unwrap_or(&self.namespace);
         let client = self
             .client
@@ -303,5 +322,213 @@ impl K8sHostBuilder {
                 .holder_identity
                 .ok_or_else(|| Error::MissingRequiredAttribute("holder_identity".to_string()))?,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::host::Host;
+
+    fn create_test_host(holder: &str) -> K8sHost {
+        K8sHost {
+            client: None,
+            namespace: "test-namespace".to_string(),
+            lease_duration_secs: DEFAULT_LEASE_DURATION_SECS,
+            holder_identity: holder.to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_create_lease_without_client_fails() {
+        let host = create_test_host("test-pod");
+        let result = host.create_lease("test-lease").await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("Client not connected"));
+    }
+
+    #[tokio::test]
+    async fn test_delete_lease_without_client_fails() {
+        let host = create_test_host("test-pod");
+        let result = host.delete_lease("test-lease", None).await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("Client not connected"));
+    }
+
+    #[tokio::test]
+    async fn test_delete_lease_uses_default_namespace() {
+        let host = create_test_host("test-pod");
+        let result = host.delete_lease("test-lease", None).await;
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Client not connected"));
+    }
+
+    #[tokio::test]
+    async fn test_delete_lease_uses_custom_namespace() {
+        let host = create_test_host("test-pod");
+        let result = host.delete_lease("test-lease", Some("custom-ns")).await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_renew_lease_without_client_fails() {
+        let host = create_test_host("test-pod");
+        let result = host.renew_lease("test-lease", None).await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("Client not connected"));
+    }
+
+    #[tokio::test]
+    async fn test_renew_lease_uses_default_namespace() {
+        let host = create_test_host("test-pod");
+        let result = host.renew_lease("test-lease", None).await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_renew_lease_uses_custom_namespace() {
+        let host = create_test_host("test-pod");
+        let result = host.renew_lease("test-lease", Some("custom-ns")).await;
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_builder_default() {
+        let builder = K8sHostBuilder::default();
+        assert_eq!(builder.lease_duration_secs, DEFAULT_LEASE_DURATION_SECS);
+        assert!(builder.holder_identity.is_none());
+    }
+
+    #[test]
+    fn test_builder_new() {
+        let builder = K8sHostBuilder::new();
+        assert_eq!(builder.lease_duration_secs, DEFAULT_LEASE_DURATION_SECS);
+        assert!(builder.holder_identity.is_none());
+    }
+
+    #[test]
+    fn test_builder_set_lease_duration() {
+        let builder = K8sHostBuilder::new().lease_duration_secs(120);
+        assert_eq!(builder.lease_duration_secs, 120);
+    }
+
+    #[test]
+    fn test_builder_set_holder_identity() {
+        let builder = K8sHostBuilder::new().holder_identity("test-pod".to_string());
+        assert_eq!(builder.holder_identity, Some("test-pod".to_string()));
+    }
+
+    #[test]
+    fn test_builder_method_chaining() {
+        let builder = K8sHostBuilder::new()
+            .lease_duration_secs(90)
+            .holder_identity("chain-pod".to_string());
+
+        assert_eq!(builder.lease_duration_secs, 90);
+        assert_eq!(builder.holder_identity, Some("chain-pod".to_string()));
+    }
+
+    #[test]
+    fn test_builder_missing_holder_identity() {
+        let result = K8sHostBuilder::new().build();
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            Error::MissingRequiredAttribute(attr) => {
+                assert_eq!(attr, "holder_identity");
+            }
+            _ => panic!("Expected MissingRequiredAttribute error"),
+        }
+    }
+
+    #[test]
+    fn test_builder_build_success() {
+        let result = K8sHostBuilder::new()
+            .holder_identity("my-pod".to_string())
+            .lease_duration_secs(120)
+            .build();
+
+        assert!(result.is_ok());
+        let host = result.unwrap();
+        assert_eq!(host.holder_identity, "my-pod");
+        assert_eq!(host.lease_duration_secs, 120);
+        assert_eq!(host.namespace, "");
+        assert!(host.client.is_none());
+    }
+
+    #[test]
+    fn test_builder_build_with_default_duration() {
+        let result = K8sHostBuilder::new()
+            .holder_identity("default-pod".to_string())
+            .build();
+
+        assert!(result.is_ok());
+        let host = result.unwrap();
+        assert_eq!(host.lease_duration_secs, DEFAULT_LEASE_DURATION_SECS);
+    }
+
+    #[test]
+    fn test_k8s_host_clone() {
+        let host = create_test_host("clone-pod");
+        let cloned = host.clone();
+
+        assert_eq!(host.holder_identity, cloned.holder_identity);
+        assert_eq!(host.namespace, cloned.namespace);
+        assert_eq!(host.lease_duration_secs, cloned.lease_duration_secs);
+    }
+
+    #[test]
+    fn test_error_display_client_not_connected() {
+        assert_eq!(
+            Error::ClientNotConnected.to_string(),
+            "Client not connected"
+        );
+    }
+
+    #[test]
+    fn test_error_display_missing_lease_spec() {
+        assert_eq!(
+            Error::MissingLeaseSpec.to_string(),
+            "Existing lease has no spec"
+        );
+    }
+
+    #[test]
+    fn test_error_display_missing_holder_identity() {
+        assert_eq!(
+            Error::MissingHolderIdentity.to_string(),
+            "Existing lease has no holder identity"
+        );
+    }
+
+    #[test]
+    fn test_error_display_lease_held_by_other() {
+        let error = Error::LeaseHeldByOther {
+            name: "my-lease".to_string(),
+            holder: "other-pod".to_string(),
+        };
+        assert_eq!(
+            error.to_string(),
+            "Lease my-lease is held by another instance: other-pod"
+        );
+    }
+
+    #[test]
+    fn test_error_display_missing_required_attribute() {
+        let error = Error::MissingRequiredAttribute("field_name".to_string());
+        assert_eq!(error.to_string(), "Missing required attribute: field_name");
     }
 }

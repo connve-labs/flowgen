@@ -12,7 +12,7 @@ use tokio::sync::{broadcast::Sender, Mutex};
 use tokio_stream::StreamExt;
 use tracing::{debug, info, warn};
 
-const DEFAULT_MESSAGE_SUBJECT: &str = "salesforce.pubsub.in";
+const DEFAULT_MESSAGE_SUBJECT: &str = "salesforce_pubsub_subscriber";
 const DEFAULT_PUBSUB_URL: &str = "https://api.pubsub.salesforce.com";
 const DEFAULT_PUBSUB_PORT: &str = "443";
 const DEFAULT_NUM_REQUESTED: i32 = 1000;
@@ -134,7 +134,10 @@ impl<T: Cache> EventHandler<T> {
                     fetch_request.replay_preset = 2;
                 }
                 Err(_) => {
-                    warn!("No cache entry found for key: {:?}", &durable_consumer_opts.name);
+                    warn!(
+                        "No cache entry found for key: {:?}",
+                        &durable_consumer_opts.name
+                    );
                 }
             }
         }
