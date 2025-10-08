@@ -4,7 +4,7 @@ use std::time::Duration;
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, warn, Instrument};
 
 /// Lease renewal interval in seconds.
 const DEFAULT_LEASE_RENEWAL_INTERVAL_SECS: u64 = 10;
@@ -54,6 +54,7 @@ pub struct TaskManager {
 
 impl TaskManager {
     /// Starts the task manager event loop.
+    #[tracing::instrument(skip(self), name = "task_manager.start")]
     pub async fn start(self) -> Self {
         let (tx, mut rx) = mpsc::unbounded_channel::<TaskRegistration>();
 
@@ -64,8 +65,10 @@ impl TaskManager {
         let active_leases = self.active_leases.clone();
 
         // Event processing loop.
-        tokio::spawn(async move {
-            while let Some(registration) = rx.recv().await {
+        let span = tracing::Span::current();
+        tokio::spawn(
+            async move {
+                while let Some(registration) = rx.recv().await {
                 // Process task registration.
                 debug!("Received task registration: {:?}", registration.task_id);
 
@@ -90,12 +93,12 @@ impl TaskManager {
                                             host.renew_lease(&lease_name_clone, None).await
                                         {
                                             error!(
-                                                "Failed to renew lease for task {}: {}",
+                                                "Failed to renew lease for task: {}, {}",
                                                 task_id, e
                                             );
                                         } else {
                                             debug!(
-                                                "Successfully renewed lease for task {}",
+                                                "Successfully renewed lease for task: {}",
                                                 task_id
                                             );
                                         }
@@ -113,7 +116,7 @@ impl TaskManager {
                             Err(e) => {
                                 // Failed to acquire lease, spawn retry task.
                                 debug!(
-                                    "Did not acquire lease for task {}: {}",
+                                    "Did not acquire lease for task: {}, {}",
                                     registration.task_id, e
                                 );
 
@@ -133,7 +136,7 @@ impl TaskManager {
                                             Ok(_) => {
                                                 // Successfully acquired the lease, notify task.
                                                 debug!(
-                                                    "Acquired lease for task {} after retry",
+                                                    "Acquired lease for task: {} after retry",
                                                     task_id
                                                 );
 
@@ -153,12 +156,12 @@ impl TaskManager {
                                                             .await
                                                         {
                                                             error!(
-                                                                "Failed to renew lease for task {}: {}",
+                                                                "Failed to renew lease for task, {}, {}",
                                                                 task_id_clone, e
                                                             );
                                                         } else {
                                                             debug!(
-                                                                "Successfully renewed lease for task {}",
+                                                                "Successfully renewed lease for task: {}",
                                                                 task_id_clone
                                                             );
                                                         }
@@ -177,7 +180,7 @@ impl TaskManager {
                                                     .is_err()
                                                 {
                                                     warn!(
-                                                        "Failed to notify task {} of leadership acquisition",
+                                                        "Failed to notify task: {} of leadership acquisition",
                                                         task_id
                                                     );
                                                 }
@@ -185,7 +188,7 @@ impl TaskManager {
                                             }
                                             Err(e) => {
                                                 debug!(
-                                                    "Retry failed to acquire lease for task {}: {}",
+                                                    "Retry failed to acquire lease for task: {}, {}",
                                                     task_id, e
                                                 );
                                             }
@@ -205,7 +208,7 @@ impl TaskManager {
                     } else {
                         // No host available.
                         debug!(
-                            "Leader election requested for task {} but no host configured",
+                            "Leader election requested for task: {} but no host configured",
                             registration.task_id
                         );
                         LeaderElectionResult::NoElection
@@ -221,19 +224,22 @@ impl TaskManager {
                     .send(result)
                     .map_err(|e| {
                         error!(
-                            "Failed to send leader election result for task {}: {}",
+                            "Failed to send leader election result for task: {}, {}",
                             registration.task_id, e
                         );
                     })
                     .ok();
+                }
             }
-        });
+            .instrument(span),
+        );
 
         self
     }
 
     /// Registers a task with the manager.
     /// Returns a receiver that streams leadership status updates.
+    #[tracing::instrument(skip(self), name = "task_manager.register", fields(task_id = %task_id))]
     pub async fn register(
         &self,
         task_id: String,
@@ -258,6 +264,7 @@ impl TaskManager {
 
     /// Cleanup all owned leases on shutdown.
     /// Deletes all leases that this instance currently holds.
+    #[tracing::instrument(skip(self), name = "task_manager.shutdown")]
     pub async fn shutdown(&self) -> Result<(), Error> {
         let task_ids: Vec<String> = self.active_leases.lock().await.keys().cloned().collect();
 
@@ -269,7 +276,7 @@ impl TaskManager {
                 if let Err(e) = host.delete_lease(&lease_name, None).await {
                     warn!("Failed to delete lease {} on shutdown: {}", lease_name, e);
                 } else {
-                    debug!("Deleted lease {} on shutdown", lease_name);
+                    debug!("Deleted lease: {} on shutdown", lease_name);
                 }
             }
         }

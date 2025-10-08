@@ -13,8 +13,6 @@ use tokio::sync::{broadcast::Receiver, Mutex};
 use tracing::{debug, info};
 
 const DEFAULT_MESSAGE_SUBJECT: &str = "salesforce_pubsub_publisher";
-const DEFAULT_PUBSUB_URI: &str = "https://api.pubsub.salesforce.com";
-const DEFAULT_PUBSUB_PORT: &str = "443";
 
 /// Errors that can occur during Salesforce Pub/Sub publishing operations.
 #[derive(thiserror::Error, Debug)]
@@ -96,7 +94,11 @@ impl flowgen_core::task::runner::Runner for Publisher {
         let a = Path::new(&config.credentials);
 
         let service = flowgen_core::service::ServiceBuilder::new()
-            .endpoint(format!("{DEFAULT_PUBSUB_URI}:{DEFAULT_PUBSUB_PORT}"))
+            .endpoint(format!(
+                "{}:{}",
+                super::config::DEFAULT_PUBSUB_URL,
+                super::config::DEFAULT_PUBSUB_PORT
+            ))
             .build()
             .map_err(Error::Service)?
             .connect()

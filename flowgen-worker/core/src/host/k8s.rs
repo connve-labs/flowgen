@@ -89,6 +89,7 @@ impl std::fmt::Debug for K8sHost {
 impl FlowgenClient for K8sHost {
     type Error = Error;
 
+    #[tracing::instrument(skip(self), name = "k8s.connect")]
     async fn connect(mut self) -> Result<Self, Self::Error> {
         let client = Client::try_default().await.map_err(Error::Kube)?;
 
@@ -112,6 +113,7 @@ impl FlowgenClient for K8sHost {
 
 #[async_trait]
 impl Host for K8sHost {
+    #[tracing::instrument(skip(self), name = "k8s.create_lease", fields(lease_name = %name))]
     async fn create_lease(&self, name: &str) -> Result<(), crate::host::Error> {
         let namespace = &self.namespace;
         let client = self
@@ -231,6 +233,7 @@ impl Host for K8sHost {
         }
     }
 
+    #[tracing::instrument(skip(self), name = "k8s.delete_lease", fields(lease_name = %name, namespace = ?namespace))]
     async fn delete_lease(
         &self,
         name: &str,
@@ -251,6 +254,7 @@ impl Host for K8sHost {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self), name = "k8s.renew_lease", fields(lease_name = %name))]
     async fn renew_lease(
         &self,
         name: &str,

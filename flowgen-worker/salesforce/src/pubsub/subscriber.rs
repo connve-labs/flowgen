@@ -13,8 +13,6 @@ use tokio_stream::StreamExt;
 use tracing::{debug, info, warn};
 
 const DEFAULT_MESSAGE_SUBJECT: &str = "salesforce_pubsub_subscriber";
-const DEFAULT_PUBSUB_URL: &str = "https://api.pubsub.salesforce.com";
-const DEFAULT_PUBSUB_PORT: &str = "443";
 const DEFAULT_NUM_REQUESTED: i32 = 1000;
 
 /// Errors that can occur during Salesforce Pub/Sub subscription operations.
@@ -262,7 +260,11 @@ impl<T: Cache> flowgen_core::task::runner::Runner for Subscriber<T> {
         // Determine Pub/Sub endpoint
         let endpoint = match &self.config.endpoint {
             Some(endpoint) => endpoint,
-            None => &format!("{DEFAULT_PUBSUB_URL}:{DEFAULT_PUBSUB_PORT}"),
+            None => &format!(
+                "{}:{}",
+                super::config::DEFAULT_PUBSUB_URL,
+                super::config::DEFAULT_PUBSUB_PORT
+            ),
         };
 
         // Create gRPC service connection
@@ -604,8 +606,11 @@ mod tests {
     #[test]
     fn test_constants() {
         assert_eq!(DEFAULT_MESSAGE_SUBJECT, "salesforce.pubsub.in");
-        assert_eq!(DEFAULT_PUBSUB_URL, "https://api.pubsub.salesforce.com");
-        assert_eq!(DEFAULT_PUBSUB_PORT, "443");
+        assert_eq!(
+            config::DEFAULT_PUBSUB_URL,
+            "https://api.pubsub.salesforce.com"
+        );
+        assert_eq!(config::DEFAULT_PUBSUB_PORT, "443");
         assert_eq!(DEFAULT_NUM_REQUESTED, 1000);
     }
 }

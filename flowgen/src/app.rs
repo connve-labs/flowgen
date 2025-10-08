@@ -3,7 +3,7 @@ use config::Config;
 use flowgen_core::client::Client;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
-use tracing::{error, info, warn};
+use tracing::{error, info, warn, Instrument};
 
 /// Errors that can occur during application execution.
 #[derive(thiserror::Error, Debug)]
@@ -17,26 +17,41 @@ pub enum Error {
         source: std::io::Error,
     },
     /// File system error occurred while globbing flow configuration files.
-    #[error(transparent)]
-    Glob(#[from] glob::GlobError),
+    #[error("Failed to glob flow configuration files: {source}")]
+    Glob {
+        #[source]
+        source: glob::GlobError,
+    },
     /// Invalid glob pattern provided for flow discovery.
-    #[error(transparent)]
-    Pattern(#[from] glob::PatternError),
+    #[error("Invalid glob pattern: {source}")]
+    Pattern {
+        #[source]
+        source: glob::PatternError,
+    },
     /// Configuration parsing or deserialization error.
-    #[error(transparent)]
-    Config(#[from] config::ConfigError),
+    #[error("Failed to parse configuration: {source}")]
+    Config {
+        #[source]
+        source: config::ConfigError,
+    },
     /// Flow directory path is invalid or cannot be converted to string.
     #[error("Invalid path")]
     InvalidPath,
     /// Kubernetes host creation error.
-    #[error(transparent)]
-    Kube(#[from] kube::Error),
+    #[error("Failed to create Kubernetes host: {source}")]
+    Kube {
+        #[source]
+        source: kube::Error,
+    },
     /// Host coordination error.
     #[error(transparent)]
     Host(#[from] flowgen_core::host::Error),
     /// Environment variable error.
-    #[error(transparent)]
-    Env(#[from] std::env::VarError),
+    #[error("Failed to read environment variable: {source}")]
+    Env {
+        #[source]
+        source: std::env::VarError,
+    },
 }
 /// Main application that loads and runs flows concurrently.
 pub struct App {
@@ -51,6 +66,7 @@ impl flowgen_core::task::runner::Runner for App {
     /// parses each configuration file, builds flow instances, registers HTTP routes, starts the HTTP server,
     /// and finally runs all flow tasks concurrently along with the server.
     type Error = Error;
+    #[tracing::instrument(skip(self), name = "app")]
     async fn run(self) -> Result<(), Error> {
         let app_config = Arc::new(self.config);
 
@@ -61,9 +77,10 @@ impl flowgen_core::task::runner::Runner for App {
             .and_then(|path| path.to_str())
             .ok_or(Error::InvalidPath)?;
 
-        let flow_configs: Vec<FlowConfig> = glob::glob(glob_pattern)?
+        let flow_configs: Vec<FlowConfig> = glob::glob(glob_pattern)
+            .map_err(|e| Error::Pattern { source: e })?
             .map(|path| -> Result<FlowConfig, Error> {
-                let path = path?;
+                let path = path.map_err(|e| Error::Glob { source: e })?;
                 info!("Loading flow: {:?}", path);
                 let contents = std::fs::read_to_string(&path).map_err(|e| Error::IO {
                     path: path.clone(),
@@ -79,8 +96,11 @@ impl flowgen_core::task::runner::Runner for App {
 
                 let config = Config::builder()
                     .add_source(config::File::from_str(&contents, file_format))
-                    .build()?;
-                Ok(config.try_deserialize::<FlowConfig>()?)
+                    .build()
+                    .map_err(|e| Error::Config { source: e })?;
+                config
+                    .try_deserialize::<FlowConfig>()
+                    .map_err(|e| Error::Config { source: e })
             })
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -92,8 +112,9 @@ impl flowgen_core::task::runner::Runner for App {
             match &host_options.host_type {
                 crate::config::HostType::K8s => {
                     // Get holder identity from environment variable.
-                    let holder_identity =
-                        std::env::var("HOSTNAME").or_else(|_| std::env::var("POD_NAME"))?;
+                    let holder_identity = std::env::var("HOSTNAME")
+                        .or_else(|_| std::env::var("POD_NAME"))
+                        .map_err(|e| Error::Env { source: e })?;
 
                     let host_builder = flowgen_core::host::k8s::K8sHostBuilder::new()
                         .holder_identity(holder_identity);
@@ -163,11 +184,15 @@ impl flowgen_core::task::runner::Runner for App {
 
         // Start server with registered routes
         let configured_port = app_config.http.as_ref().and_then(|http| http.port);
-        let server_handle = tokio::spawn(async move {
-            if let Err(e) = http_server.start_server(configured_port).await {
-                error!("Failed to start HTTP Server: {}", e);
+        let span = tracing::Span::current();
+        let server_handle = tokio::spawn(
+            async move {
+                if let Err(e) = http_server.start_server(configured_port).await {
+                    error!("Failed to start HTTP Server: {}", e);
+                }
             }
-        });
+            .instrument(span),
+        );
 
         // Run tasks concurrently with server
         let flow_handle = tokio::spawn(async move {

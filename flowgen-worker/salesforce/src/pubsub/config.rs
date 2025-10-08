@@ -18,6 +18,12 @@
 use flowgen_core::config::ConfigExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+
+/// Default Salesforce Pub/Sub API URL.
+pub const DEFAULT_PUBSUB_URL: &str = "https://api.pubsub.salesforce.com";
+/// Default Salesforce Pub/Sub API port.
+pub const DEFAULT_PUBSUB_PORT: &str = "443";
+
 /// Configuration structure for Salesforce Pub/Sub subscriber operations.
 ///
 /// This structure defines all parameters needed to subscribe to Salesforce Pub/Sub topics,
