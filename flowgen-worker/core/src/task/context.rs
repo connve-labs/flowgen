@@ -30,11 +30,13 @@ pub struct TaskContext {
     pub flow: FlowOptions,
     /// Task manager for centralized task lifecycle management.
     pub task_manager: std::sync::Arc<crate::task::manager::TaskManager>,
+    /// Optional shared cache for task operations.
+    pub cache: Option<std::sync::Arc<dyn crate::cache::Cache>>,
 }
 
 /// Host client for distributed coordination.
 #[derive(Clone)]
-pub struct HostClient {
+pub struct Host {
     /// Arc-wrapped host implementation for shared access.
     pub client: std::sync::Arc<dyn crate::host::Host>,
 }
@@ -44,13 +46,14 @@ impl std::fmt::Debug for TaskContext {
         f.debug_struct("TaskContext")
             .field("flow", &self.flow)
             .field("task_manager", &"<TaskManager>")
+            .field("cache", &self.cache.as_ref().map(|_| "<Cache>"))
             .finish()
     }
 }
 
-impl std::fmt::Debug for HostClient {
+impl std::fmt::Debug for Host {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("HostClient")
+        f.debug_struct("Host")
             .field("client", &"<dyn Host>")
             .finish()
     }
@@ -65,6 +68,8 @@ pub struct TaskContextBuilder {
     flow_labels: Option<Map<String, Value>>,
     /// Task manager for centralized task lifecycle management.
     task_manager: Option<std::sync::Arc<crate::task::manager::TaskManager>>,
+    /// Optional shared cache for task operations.
+    cache: Option<std::sync::Arc<dyn crate::cache::Cache>>,
 }
 
 impl TaskContextBuilder {
@@ -103,6 +108,15 @@ impl TaskContextBuilder {
         self
     }
 
+    /// Sets the optional cache for task operations.
+    ///
+    /// # Arguments
+    /// * `cache` - Optional cache instance
+    pub fn cache(mut self, cache: Option<std::sync::Arc<dyn crate::cache::Cache>>) -> Self {
+        self.cache = cache;
+        self
+    }
+
     /// Builds the TaskContext instance.
     ///
     /// # Errors
@@ -118,6 +132,7 @@ impl TaskContextBuilder {
             task_manager: self
                 .task_manager
                 .ok_or_else(|| Error::MissingRequiredAttribute("task_manager".to_string()))?,
+            cache: self.cache,
         })
     }
 }

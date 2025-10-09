@@ -44,9 +44,7 @@ pub struct Cache {
     store: Option<async_nats::jetstream::kv::Store>,
 }
 
-impl flowgen_core::cache::Cache for Cache {
-    type Error = Error;
-
+impl Cache {
     /// Connects to NATS and initializes the KV bucket.
     ///
     /// Consumes `self`, returns `Cache` with an active KV store connection.
@@ -56,7 +54,7 @@ impl flowgen_core::cache::Cache for Cache {
     ///
     /// # Errors
     /// If NATS connection, authentication, or KV bucket access/creation fails.
-    async fn init(mut self, bucket: &str) -> Result<Self, Self::Error> {
+    pub async fn init(mut self, bucket: &str) -> Result<Self, Error> {
         // Connect to NATS.
         let client = crate::client::ClientBuilder::new()
             .credentials_path(self.credentials_path.clone())
@@ -84,7 +82,10 @@ impl flowgen_core::cache::Cache for Cache {
         self.store = Some(store);
         Ok(self)
     }
+}
 
+#[async_trait::async_trait]
+impl flowgen_core::cache::Cache for Cache {
     /// Puts a key-value pair into the NATS KV store.
     ///
     /// # Arguments
@@ -93,9 +94,15 @@ impl flowgen_core::cache::Cache for Cache {
     ///
     /// # Errors
     /// If store is uninitialized or NATS `put` fails.
-    async fn put(&self, key: &str, value: bytes::Bytes) -> Result<(), Self::Error> {
-        let store = self.store.as_ref().ok_or(Error::MissingKVStore())?;
-        store.put(key, value).await.map_err(Error::KVPut)?;
+    async fn put(&self, key: &str, value: bytes::Bytes) -> Result<(), flowgen_core::cache::Error> {
+        let store = self
+            .store
+            .as_ref()
+            .ok_or_else(|| Box::new(Error::MissingKVStore()) as flowgen_core::cache::Error)?;
+        store
+            .put(key, value)
+            .await
+            .map_err(|e| Box::new(Error::KVPut(e)) as flowgen_core::cache::Error)?;
         Ok(())
     }
 
@@ -106,14 +113,17 @@ impl flowgen_core::cache::Cache for Cache {
     ///
     /// # Errors
     /// If store is uninitialized, NATS `get` fails, or key not found/value empty.
-    async fn get(&self, key: &str) -> Result<bytes::Bytes, Self::Error> {
-        let store = self.store.as_ref().ok_or(Error::MissingKVStore())?;
+    async fn get(&self, key: &str) -> Result<bytes::Bytes, flowgen_core::cache::Error> {
+        let store = self
+            .store
+            .as_ref()
+            .ok_or_else(|| Box::new(Error::MissingKVStore()) as flowgen_core::cache::Error)?;
         // Map Ok(None) (key not found/empty) from NATS to Error::EmptyBuffer.
         let bytes = store
             .get(key)
             .await
-            .map_err(Error::KVEntry)?
-            .ok_or(Error::EmptyBuffer())?;
+            .map_err(|e| Box::new(Error::KVEntry(e)) as flowgen_core::cache::Error)?
+            .ok_or_else(|| Box::new(Error::EmptyBuffer()) as flowgen_core::cache::Error)?;
         Ok(bytes)
     }
 }

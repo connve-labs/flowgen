@@ -107,6 +107,43 @@ impl flowgen_core::task::runner::Runner for App {
         // Create shared HTTP Server.
         let http_server = Arc::new(flowgen_http::server::HttpServer::new());
 
+        // Create shared cache if configured.
+        let cache: Option<Arc<flowgen_nats::cache::Cache>> =
+            if let Some(cache_config) = &app_config.cache {
+                if cache_config.enabled {
+                    match flowgen_nats::cache::CacheBuilder::new()
+                        .credentials_path(cache_config.credentials_path.clone())
+                        .build()
+                        .map_err(|e| {
+                            warn!("Failed to build cache: {}. Continuing without cache.", e);
+                            e
+                        })
+                        .ok()
+                        .and_then(|builder| {
+                            futures::executor::block_on(async {
+                                builder
+                                    .init("flowgen_cache")
+                                    .await
+                                    .map_err(|e| {
+                                        warn!(
+                                        "Failed to initialize cache: {}. Continuing without cache.",
+                                        e
+                                    );
+                                        e
+                                    })
+                                    .ok()
+                            })
+                        }) {
+                        Some(cache) => Some(Arc::new(cache)),
+                        None => None,
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
         // Create host client if configured.
         let host_client = if let Some(host_options) = &app_config.host {
             match &host_options.host_type {
@@ -125,11 +162,9 @@ impl flowgen_core::task::runner::Runner for App {
                         .connect()
                         .await
                     {
-                        Ok(connected_host) => {
-                            Some(Arc::new(flowgen_core::task::context::HostClient {
-                                client: std::sync::Arc::new(connected_host),
-                            }))
-                        }
+                        Ok(connected_host) => Some(Arc::new(flowgen_core::task::context::Host {
+                            client: std::sync::Arc::new(connected_host),
+                        })),
                         Err(e) => {
                             warn!("{}. Continuing without host coordination.", e);
                             None
@@ -144,20 +179,17 @@ impl flowgen_core::task::runner::Runner for App {
         // Initialize flows and register routes
         let mut flow_tasks = Vec::new();
         for config in flow_configs {
-            let app_config = Arc::clone(&app_config);
             let http_server = Arc::clone(&http_server);
             let host_client = host_client.as_ref().map(Arc::clone);
+            let cache_clone = cache
+                .as_ref()
+                .map(|c| Arc::clone(c) as Arc<dyn flowgen_core::cache::Cache>);
 
-            let mut flow_builder = super::flow::FlowBuilder::new()
+            let flow_builder = super::flow::FlowBuilder::new()
                 .config(Arc::new(config))
                 .http_server(http_server)
-                .host(host_client);
-
-            if let Some(cache) = &app_config.cache {
-                if cache.enabled {
-                    flow_builder = flow_builder.cache_credentials_path(&cache.credentials_path);
-                }
-            }
+                .host(host_client)
+                .cache(cache_clone);
 
             // Register routes and collect tasks
             let flow = match flow_builder.build() {

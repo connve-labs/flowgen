@@ -42,25 +42,26 @@ pub enum Error {
 }
 /// Event generator that produces events at scheduled intervals.
 #[derive(Debug)]
-pub struct Subscriber<T: crate::cache::Cache> {
+pub struct Subscriber {
     /// Configuration settings for event generation.
     config: Arc<super::config::Subscriber>,
     /// Channel sender for broadcasting generated events.
     tx: Sender<Event>,
     /// Task identifier for event tracking.
     current_task_id: usize,
-    /// Cache instance for storing last run time.
-    cache: Arc<T>,
     /// Task execution context providing metadata and runtime configuration.
     task_context: Arc<crate::task::context::TaskContext>,
 }
 
-impl<T: crate::cache::Cache> crate::task::runner::Runner for Subscriber<T> {
+impl crate::task::runner::Runner for Subscriber {
     type Error = Error;
 
     #[tracing::instrument(skip(self), name = DEFAULT_MESSAGE_SUBJECT, fields(task = %self.config.name, task_id = self.current_task_id))]
     async fn run(self) -> Result<(), Error> {
         let mut counter = 0;
+
+        // Get cache from task context if available.
+        let cache = self.task_context.cache.as_ref();
 
         // Generate a cache_key based on flow name and task name.
         let cache_key = format!(
@@ -75,15 +76,20 @@ impl<T: crate::cache::Cache> crate::task::runner::Runner for Subscriber<T> {
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_secs();
-            let next_run_time = match self.cache.get(&cache_key).await {
-                Ok(cached_bytes) => {
-                    let cached_str = String::from_utf8_lossy(&cached_bytes);
-                    match cached_str.parse::<u64>() {
-                        Ok(last_run) => last_run + self.config.interval,
-                        Err(_) => now, // Invalid cache, run immediately.
+
+            let next_run_time = if let Some(cache) = cache {
+                match cache.get(&cache_key).await {
+                    Ok(cached_bytes) => {
+                        let cached_str = String::from_utf8_lossy(&cached_bytes);
+                        match cached_str.parse::<u64>() {
+                            Ok(last_run) => last_run + self.config.interval,
+                            Err(_) => now, // Invalid cache, run immediately.
+                        }
                     }
+                    Err(_) => now, // No cache entry, run immediately.
                 }
-                Err(_) => now, // No cache entry, run immediately.
+            } else {
+                now // No cache available, run immediately.
             };
 
             // Sleep until it's time to generate the next event.
@@ -116,13 +122,12 @@ impl<T: crate::cache::Cache> crate::task::runner::Runner for Subscriber<T> {
 
             // Update cache with current time after sending the event.
             let current_time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-            if let Err(cache_err) = self
-                .cache
-                .put(&cache_key, current_time.to_string().into())
-                .await
-            {
-                // Log warn for cache errors.
-                warn!("Failed to update cache: {:?}", cache_err);
+            if let Some(cache) = cache {
+                if let Err(cache_err) = cache.put(&cache_key, current_time.to_string().into()).await
+                {
+                    // Log warn for cache errors.
+                    warn!("Failed to update cache: {:?}", cache_err);
+                }
             }
 
             counter += 1;
@@ -136,24 +141,19 @@ impl<T: crate::cache::Cache> crate::task::runner::Runner for Subscriber<T> {
 
 /// Builder for constructing Subscriber instances.
 #[derive(Default)]
-pub struct SubscriberBuilder<T: crate::cache::Cache> {
+pub struct SubscriberBuilder {
     /// Generate task configuration (required for build).
     config: Option<Arc<super::config::Subscriber>>,
     /// Event broadcast sender (required for build).
     tx: Option<Sender<Event>>,
     /// Current task identifier for event tracking.
     current_task_id: usize,
-    /// Cache instance for storing last run time.
-    cache: Option<Arc<T>>,
     /// Task execution context providing metadata and runtime configuration.
     task_context: Option<Arc<crate::task::context::TaskContext>>,
 }
 
-impl<T: crate::cache::Cache> SubscriberBuilder<T>
-where
-    T: Default,
-{
-    pub fn new() -> SubscriberBuilder<T> {
+impl SubscriberBuilder {
+    pub fn new() -> SubscriberBuilder {
         SubscriberBuilder {
             ..Default::default()
         }
@@ -174,17 +174,12 @@ where
         self
     }
 
-    pub fn cache(mut self, cache: Arc<T>) -> Self {
-        self.cache = Some(cache);
-        self
-    }
-
     pub fn task_context(mut self, task_context: Arc<crate::task::context::TaskContext>) -> Self {
         self.task_context = Some(task_context);
         self
     }
 
-    pub async fn build(self) -> Result<Subscriber<T>, Error> {
+    pub async fn build(self) -> Result<Subscriber, Error> {
         Ok(Subscriber {
             config: self
                 .config
@@ -193,9 +188,6 @@ where
                 .tx
                 .ok_or_else(|| Error::MissingRequiredAttribute("sender".to_string()))?,
             current_task_id: self.current_task_id,
-            cache: self
-                .cache
-                .ok_or_else(|| Error::MissingRequiredAttribute("cache".to_string()))?,
             task_context: self
                 .task_context
                 .ok_or_else(|| Error::MissingRequiredAttribute("task_context".to_string()))?,

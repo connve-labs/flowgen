@@ -58,9 +58,7 @@ pub enum Error {
 ///
 /// Subscribes to a topic, deserializes Avro payloads, and forwards events
 /// to the event channel. Supports durable consumers with replay ID caching.
-struct EventHandler<T: Cache> {
-    /// Cache for replay IDs and schemas
-    cache: Arc<T>,
+struct EventHandler {
     /// Salesforce Pub/Sub client context
     pubsub: Arc<Mutex<super::context::Context>>,
     /// Subscriber configuration
@@ -69,14 +67,18 @@ struct EventHandler<T: Cache> {
     tx: Sender<Event>,
     /// Task identifier for event tracking
     current_task_id: usize,
+    /// Task execution context providing metadata and runtime configuration.
+    task_context: Arc<flowgen_core::task::context::TaskContext>,
 }
 
-impl<T: Cache> EventHandler<T> {
+impl EventHandler {
     /// Runs the topic listener to process events from Salesforce Pub/Sub.
     ///
     /// Fetches topic and schema info, establishes subscription with optional
     /// replay ID, then processes incoming events in a loop.
     async fn handle(self) -> Result<(), Error> {
+        // Get cache from task context if available.
+        let cache = self.task_context.cache.as_ref();
         // Get topic metadata.
         let topic_info = self
             .pubsub
@@ -123,16 +125,18 @@ impl<T: Cache> EventHandler<T> {
             .as_ref()
             .filter(|opts| opts.enabled && !opts.managed_subscription)
         {
-            match self.cache.get(&durable_consumer_opts.name).await {
-                Ok(reply_id) => {
-                    fetch_request.replay_id = reply_id.into();
-                    fetch_request.replay_preset = 2;
-                }
-                Err(_) => {
-                    warn!(
-                        "No cache entry found for key: {:?}",
-                        &durable_consumer_opts.name
-                    );
+            if let Some(cache) = cache {
+                match cache.get(&durable_consumer_opts.name).await {
+                    Ok(reply_id) => {
+                        fetch_request.replay_id = reply_id.into();
+                        fetch_request.replay_preset = 2;
+                    }
+                    Err(_) => {
+                        warn!(
+                            "No cache entry found for key: {:?}",
+                            &durable_consumer_opts.name
+                        );
+                    }
                 }
             }
         }
@@ -159,12 +163,14 @@ impl<T: Cache> EventHandler<T> {
                             .as_ref()
                             .filter(|opts| opts.enabled && !opts.managed_subscription)
                         {
-                            self.cache
-                                .put(&durable_consumer_opts.name, ce.replay_id.into())
-                                .await
-                                .map_err(|err| {
-                                    Error::Cache(format!("Failed to cache replay ID: {err:?}"))
-                                })?;
+                            if let Some(cache) = cache {
+                                cache
+                                    .put(&durable_consumer_opts.name, ce.replay_id.into())
+                                    .await
+                                    .map_err(|err| {
+                                        Error::Cache(format!("Failed to cache replay ID: {err:?}"))
+                                    })?;
+                            }
                         }
 
                         if let Some(event) = ce.event {
@@ -215,20 +221,18 @@ impl<T: Cache> EventHandler<T> {
 /// Creates TopicListener instances for each configured topic,
 /// handling authentication and connection setup.
 #[derive(Debug)]
-pub struct Subscriber<T: Cache> {
+pub struct Subscriber {
     /// Configuration for topics, credentials, and consumer options
     config: Arc<super::config::Subscriber>,
     /// Event channel sender
     tx: Sender<Event>,
     /// Task identifier for event tracking
     current_task_id: usize,
-    /// Cache for replay IDs and schemas
-    cache: Arc<T>,
     /// Task execution context providing metadata and runtime configuration.
-    _task_context: Arc<flowgen_core::task::context::TaskContext>,
+    task_context: Arc<flowgen_core::task::context::TaskContext>,
 }
 
-impl<T: Cache> flowgen_core::task::runner::Runner for Subscriber<T> {
+impl flowgen_core::task::runner::Runner for Subscriber {
     type Error = Error;
 
     /// Runs the subscriber by spawning TopicListener tasks for each topic.
@@ -276,14 +280,14 @@ impl<T: Cache> flowgen_core::task::runner::Runner for Subscriber<T> {
         let pubsub: Arc<Mutex<super::context::Context>> = Arc::clone(&pubsub);
         let tx = self.tx.clone();
         let config = Arc::clone(&self.config);
-        let cache = Arc::clone(&self.cache);
         let current_task_id = self.current_task_id;
+        let task_context = Arc::clone(&self.task_context);
         let event_handler = EventHandler {
-            cache,
             config,
             current_task_id,
             tx,
             pubsub,
+            task_context,
         };
 
         // Spawn event handler task and wait for completion.
@@ -303,25 +307,20 @@ impl<T: Cache> flowgen_core::task::runner::Runner for Subscriber<T> {
 
 /// Builder for constructing Subscriber instances.
 #[derive(Default)]
-pub struct SubscriberBuilder<T: Cache> {
+pub struct SubscriberBuilder {
     /// Subscriber configuration
     config: Option<Arc<super::config::Subscriber>>,
     /// Event channel sender
     tx: Option<Sender<Event>>,
     /// Task identifier
     current_task_id: usize,
-    /// Cache instance
-    cache: Option<Arc<T>>,
     /// Task execution context providing metadata and runtime configuration
     task_context: Option<Arc<flowgen_core::task::context::TaskContext>>,
 }
 
-impl<T: Cache> SubscriberBuilder<T>
-where
-    T: Default,
-{
+impl SubscriberBuilder {
     /// Creates a new builder instance.
-    pub fn new() -> SubscriberBuilder<T> {
+    pub fn new() -> SubscriberBuilder {
         SubscriberBuilder {
             ..Default::default()
         }
@@ -345,12 +344,6 @@ where
         self
     }
 
-    /// Sets the cache instance.
-    pub fn cache(mut self, cache: Arc<T>) -> Self {
-        self.cache = Some(cache);
-        self
-    }
-
     /// Sets the task execution context.
     pub fn task_context(
         mut self,
@@ -361,7 +354,7 @@ where
     }
 
     /// Builds the Subscriber instance.
-    pub async fn build(self) -> Result<Subscriber<T>, Error> {
+    pub async fn build(self) -> Result<Subscriber, Error> {
         Ok(Subscriber {
             config: self
                 .config
@@ -369,11 +362,8 @@ where
             tx: self
                 .tx
                 .ok_or_else(|| Error::MissingRequiredAttribute("sender".to_string()))?,
-            cache: self
-                .cache
-                .ok_or_else(|| Error::MissingRequiredAttribute("cache".to_string()))?,
             current_task_id: self.current_task_id,
-            _task_context: self
+            task_context: self
                 .task_context
                 .ok_or_else(|| Error::MissingRequiredAttribute("task_context".to_string()))?,
         })
