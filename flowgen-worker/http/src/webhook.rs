@@ -13,7 +13,7 @@ use reqwest::{header::HeaderMap, StatusCode};
 use serde_json::{json, Map, Value};
 use std::{fs, sync::Arc};
 use tokio::sync::broadcast::Sender;
-use tracing::{error, info};
+use tracing::{error, info, Instrument};
 
 /// Default subject for webhook events.
 const DEFAULT_MESSAGE_SUBJECT: &str = "http_webhook";
@@ -237,8 +237,10 @@ impl flowgen_core::task::runner::Runner for Processor {
             credentials,
         };
 
-        let handler = move |headers: HeaderMap, request: Request<Body>| async move {
-            event_handler.handle(headers, request).await
+        let span = tracing::Span::current();
+        let handler = move |headers: HeaderMap, request: Request<Body>| {
+            let span = span.clone();
+            async move { event_handler.handle(headers, request).await }.instrument(span)
         };
 
         let method_router = match config.method {

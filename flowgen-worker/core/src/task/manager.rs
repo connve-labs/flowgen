@@ -179,7 +179,7 @@ impl TaskManager {
                                                     .send(LeaderElectionResult::Leader)
                                                     .is_err()
                                                 {
-                                                    warn!(
+                                                    debug!(
                                                         "Failed to notify task: {} of leadership acquisition",
                                                         task_id
                                                     );
