@@ -72,6 +72,8 @@ pub struct Subscriber {
     tx: Sender<Event>,
     /// Current task identifier for event tagging.
     current_task_id: usize,
+    /// Task execution context providing metadata and runtime configuration.
+    _task_context: Arc<flowgen_core::task::context::TaskContext>,
 }
 
 impl flowgen_core::task::runner::Runner for Subscriber {
@@ -188,6 +190,9 @@ impl SubscriberBuilder {
                 .tx
                 .ok_or_else(|| Error::MissingRequiredAttribute("sender".to_string()))?,
             current_task_id: self.current_task_id,
+            _task_context: self
+                .task_context
+                .ok_or_else(|| Error::MissingRequiredAttribute("task_context".to_string()))?,
         })
     }
 }
@@ -371,6 +376,7 @@ mod tests {
             config: config.clone(),
             tx,
             current_task_id: 0,
+            _task_context: create_mock_task_context(),
         };
 
         assert_eq!(subscriber.config, config);
@@ -411,5 +417,31 @@ mod tests {
         assert!(info_err
             .to_string()
             .contains("Consumer configuration check failed"));
+    }
+
+    #[tokio::test]
+    async fn test_subscriber_builder_build_missing_task_context() {
+        let config = Arc::new(super::super::config::Subscriber {
+            name: "test_subscriber".to_string(),
+            credentials: PathBuf::from("/test/creds.jwt"),
+            stream: "test_stream".to_string(),
+            subject: "test.subject".to_string(),
+            durable_name: "test_consumer".to_string(),
+            batch_size: 50,
+            delay_secs: None,
+        });
+        let (tx, _rx) = broadcast::channel(100);
+
+        let result = SubscriberBuilder::new()
+            .config(config)
+            .sender(tx)
+            .current_task_id(1)
+            .build()
+            .await;
+
+        assert!(result.is_err());
+        assert!(
+            matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "task_context")
+        );
     }
 }

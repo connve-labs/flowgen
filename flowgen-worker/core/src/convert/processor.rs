@@ -136,6 +136,8 @@ pub struct Processor {
     rx: Receiver<Event>,
     /// Current task identifier for event filtering.
     current_task_id: usize,
+    /// Task execution context providing metadata and runtime configuration.
+    _task_context: Arc<crate::task::context::TaskContext>,
 }
 
 impl crate::task::runner::Runner for Processor {
@@ -255,6 +257,9 @@ impl ProcessorBuilder {
                 .tx
                 .ok_or_else(|| Error::MissingRequiredAttribute("sender".to_string()))?,
             current_task_id: self.current_task_id,
+            _task_context: self
+                .task_context
+                .ok_or_else(|| Error::MissingRequiredAttribute("task_context".to_string()))?,
         })
     }
 }
@@ -455,5 +460,24 @@ mod tests {
         }
         assert!(output_event.subject.starts_with("convert.test."));
         assert_eq!(output_event.current_task_id, Some(1));
+    }
+
+    #[tokio::test]
+    async fn test_processor_builder_build_missing_task_context() {
+        let config = Arc::new(crate::convert::config::Processor::default());
+        let (tx, rx) = broadcast::channel(100);
+
+        let result = ProcessorBuilder::new()
+            .config(config)
+            .sender(tx)
+            .receiver(rx)
+            .current_task_id(1)
+            .build()
+            .await;
+
+        assert!(result.is_err());
+        assert!(
+            matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "task_context")
+        );
     }
 }

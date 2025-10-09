@@ -224,6 +224,8 @@ pub struct Subscriber<T: Cache> {
     current_task_id: usize,
     /// Cache for replay IDs and schemas
     cache: Arc<T>,
+    /// Task execution context providing metadata and runtime configuration.
+    _task_context: Arc<flowgen_core::task::context::TaskContext>,
 }
 
 impl<T: Cache> flowgen_core::task::runner::Runner for Subscriber<T> {
@@ -371,6 +373,9 @@ where
                 .cache
                 .ok_or_else(|| Error::MissingRequiredAttribute("cache".to_string()))?,
             current_task_id: self.current_task_id,
+            _task_context: self
+                .task_context
+                .ok_or_else(|| Error::MissingRequiredAttribute("task_context".to_string()))?,
         })
     }
 }
@@ -584,6 +589,35 @@ mod tests {
         assert_eq!(
             subscriber.config.endpoint,
             Some("api.pubsub.salesforce.com:7443".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_subscriber_builder_build_missing_task_context() {
+        let config = Arc::new(config::Subscriber {
+            name: "test_subscriber".to_string(),
+            credentials: "test_creds".to_string(),
+            topic: config::Topic {
+                name: "/event/Test__e".to_string(),
+                durable_consumer_options: None,
+                num_requested: Some(10),
+            },
+            endpoint: None,
+        });
+        let (tx, _) = broadcast::channel::<Event>(10);
+        let cache = std::sync::Arc::new(TestCache::new());
+
+        let result = SubscriberBuilder::<TestCache>::new()
+            .config(config)
+            .sender(tx)
+            .cache(cache)
+            .current_task_id(1)
+            .build()
+            .await;
+
+        assert!(result.is_err());
+        assert!(
+            matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "task_context")
         );
     }
 }

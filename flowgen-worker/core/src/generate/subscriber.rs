@@ -475,4 +475,24 @@ mod tests {
         let cache_data = cache.data.lock().await;
         assert!(cache_data.contains_key("test-flow.generate.test.last_run"));
     }
+
+    #[tokio::test]
+    async fn test_subscriber_builder_build_missing_task_context() {
+        let config = Arc::new(crate::generate::config::Subscriber::default());
+        let (tx, _rx) = broadcast::channel(100);
+        let cache = Arc::new(MockCache::default());
+
+        let result = SubscriberBuilder::<MockCache>::new()
+            .config(config)
+            .sender(tx)
+            .cache(cache)
+            .current_task_id(1)
+            .build()
+            .await;
+
+        assert!(result.is_err());
+        assert!(
+            matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "task_context")
+        );
+    }
 }

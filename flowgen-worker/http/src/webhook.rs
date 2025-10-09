@@ -201,7 +201,7 @@ pub struct Processor {
     /// Shared HTTP server instance.
     http_server: Arc<super::server::HttpServer>,
     /// Task execution context providing metadata and runtime configuration.
-    task_context: Arc<flowgen_core::task::context::TaskContext>,
+    _task_context: Arc<flowgen_core::task::context::TaskContext>,
 }
 
 impl flowgen_core::task::runner::Runner for Processor {
@@ -209,16 +209,6 @@ impl flowgen_core::task::runner::Runner for Processor {
 
     #[tracing::instrument(skip(self), name = DEFAULT_MESSAGE_SUBJECT, fields(task = %self.config.name, task_id = self.current_task_id))]
     async fn run(self) -> Result<(), Error> {
-        // Register task with task manager.
-        let task_id = format!(
-            "{}.{}.{}",
-            self.task_context.flow.name, DEFAULT_MESSAGE_SUBJECT, self.config.name
-        );
-        self.task_context
-            .task_manager
-            .register(task_id, None)
-            .await?;
-
         let config = Arc::clone(&self.config);
 
         // Load credentials at task creation time
@@ -323,7 +313,7 @@ impl ProcessorBuilder {
             http_server: self
                 .http_server
                 .ok_or_else(|| Error::MissingRequiredAttribute("http_server".to_string()))?,
-            task_context: self
+            _task_context: self
                 .task_context
                 .ok_or_else(|| Error::MissingRequiredAttribute("task_context".to_string()))?,
         })
