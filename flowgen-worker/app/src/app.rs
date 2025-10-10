@@ -182,7 +182,10 @@ impl flowgen_core::task::runner::Runner for App {
         };
 
         // Initialize flows and spawn each flow's execution.
-        let mut flow_handles = Vec::new();
+        // Separate flows that need to complete setup before server starts.
+        let mut blocking_flows = Vec::new();
+        let mut background_flows = Vec::new();
+
         for config in flow_configs {
             let http_server = Arc::clone(&http_server);
             let host = host_client.as_ref().map(Arc::clone);
@@ -205,6 +208,9 @@ impl flowgen_core::task::runner::Runner for App {
                 }
             };
 
+            // Check if this flow should complete setup before server starts
+            let wait_for_ready = flow.should_wait_for_ready();
+
             let span = tracing::Span::current();
             let flow_handle = tokio::spawn(
                 async move {
@@ -214,10 +220,24 @@ impl flowgen_core::task::runner::Runner for App {
                 }
                 .instrument(span),
             );
-            flow_handles.push(flow_handle);
+
+            if wait_for_ready {
+                blocking_flows.push(flow_handle);
+            } else {
+                background_flows.push(flow_handle);
+            }
         }
 
-        // Start server with registered routes
+        // Wait for blocking flows to complete setup (e.g., registering HTTP routes)
+        if !blocking_flows.is_empty() {
+            info!(
+                "Waiting for {} flow(s) to complete initial setup",
+                blocking_flows.len()
+            );
+            futures_util::future::join_all(blocking_flows).await;
+        }
+
+        // Start HTTP server now that setup is complete
         let configured_port = app_config.http_server.as_ref().and_then(|http| http.port);
         let span = tracing::Span::current();
         let server_handle = tokio::spawn(
@@ -228,10 +248,10 @@ impl flowgen_core::task::runner::Runner for App {
             }
             .instrument(span),
         );
+        background_flows.push(server_handle);
 
-        // Wait for all flows and server
-        flow_handles.push(server_handle);
-        futures_util::future::join_all(flow_handles).await;
+        // Wait for all background flows and server
+        futures_util::future::join_all(background_flows).await;
 
         Ok(())
     }

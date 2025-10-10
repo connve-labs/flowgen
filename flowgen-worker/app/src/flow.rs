@@ -79,6 +79,23 @@ pub struct Flow {
 }
 
 impl Flow {
+    /// Determines if this flow should wait for ready based on its tasks.
+    ///
+    /// Returns true if the flow contains webhook tasks and doesn't require leader election.
+    /// Webhook flows need to complete route registration before the HTTP server starts.
+    pub fn should_wait_for_ready(&self) -> bool {
+        // Auto-detect: flows with webhooks and no leader election should wait
+        let has_webhooks = self
+            .config
+            .flow
+            .tasks
+            .iter()
+            .any(|task| matches!(task, Task::http_webhook(_)));
+        let requires_election = self.config.flow.require_lease_election.unwrap_or(false);
+
+        has_webhooks && !requires_election
+    }
+
     /// Executes all tasks in the flow concurrently.
     ///
     /// Creates a shared event channel and spawns each configured task as a
@@ -153,12 +170,20 @@ impl Flow {
             }
 
             // Spawn all tasks as leader.
-            task_list = Self::spawn_tasks(
+            let (blocking_tasks, background_tasks) = Self::spawn_tasks(
                 &self.config.flow.tasks,
                 &tx,
                 &task_context,
                 &self.http_server,
-            );
+            )
+            .await;
+
+            // For flows without leader election, wait for blocking tasks to complete
+            if !require_lease_election && !blocking_tasks.is_empty() {
+                futures::future::join_all(blocking_tasks).await;
+            }
+
+            task_list = background_tasks;
 
             // Monitor for leadership changes while tasks are running (only if election enabled).
             if require_lease_election {
@@ -187,8 +212,8 @@ impl Flow {
                     }
                 }
             } else {
-                // No leader election - return immediately to allow HTTP server to start.
-                // Tasks will be monitored by the main app loop.
+                // No leader election - return immediately with spawned tasks.
+                // Tasks will run in the background.
                 return Ok(Self {
                     config: self.config,
                     task_list: Some(task_list),
@@ -201,13 +226,20 @@ impl Flow {
     }
 
     /// Spawns all tasks for the flow.
-    fn spawn_tasks(
+    /// Returns (blocking_tasks, background_tasks) where blocking_tasks complete quickly
+    /// and must be awaited before the application is ready (e.g., webhooks registering routes),
+    /// while background_tasks run indefinitely.
+    async fn spawn_tasks(
         tasks: &[Task],
         tx: &Sender<Event>,
         task_context: &Arc<flowgen_core::task::context::TaskContext>,
         http_server: &Arc<flowgen_http::server::HttpServer>,
-    ) -> Vec<JoinHandle<Result<(), Error>>> {
-        let mut task_list = Vec::new();
+    ) -> (
+        Vec<JoinHandle<Result<(), Error>>>,
+        Vec<JoinHandle<Result<(), Error>>>,
+    ) {
+        let mut blocking_tasks = Vec::new();
+        let mut background_tasks = Vec::new();
 
         for (i, task) in tasks.iter().enumerate() {
             match task {
@@ -234,7 +266,7 @@ impl Flow {
                         }
                         .instrument(span),
                     );
-                    task_list.push(task);
+                    background_tasks.push(task);
                 }
                 Task::generate(config) => {
                     let config = Arc::new(config.to_owned());
@@ -256,7 +288,7 @@ impl Flow {
                         }
                         .instrument(span),
                     );
-                    task_list.push(task);
+                    background_tasks.push(task);
                 }
                 Task::http_request(config) => {
                     let config = Arc::new(config.to_owned());
@@ -281,7 +313,7 @@ impl Flow {
                         }
                         .instrument(span),
                     );
-                    task_list.push(task);
+                    background_tasks.push(task);
                 }
                 Task::http_webhook(config) => {
                     let config = Arc::new(config.to_owned());
@@ -306,7 +338,7 @@ impl Flow {
                         }
                         .instrument(span),
                     );
-                    task_list.push(task);
+                    blocking_tasks.push(task);
                 }
 
                 Task::nats_jetstream_subscriber(config) => {
@@ -329,7 +361,7 @@ impl Flow {
                         }
                         .instrument(span),
                     );
-                    task_list.push(task);
+                    background_tasks.push(task);
                 }
                 Task::nats_jetstream_publisher(config) => {
                     let config = Arc::new(config.to_owned());
@@ -351,7 +383,7 @@ impl Flow {
                         }
                         .instrument(span),
                     );
-                    task_list.push(task);
+                    background_tasks.push(task);
                 }
                 Task::salesforce_pubsub_subscriber(config) => {
                     let config = Arc::new(config.to_owned());
@@ -373,7 +405,7 @@ impl Flow {
                         }
                         .instrument(span),
                     );
-                    task_list.push(task);
+                    background_tasks.push(task);
                 }
                 Task::salesforce_pubsub_publisher(config) => {
                     let config = Arc::new(config.to_owned());
@@ -395,7 +427,7 @@ impl Flow {
                         }
                         .instrument(span),
                     );
-                    task_list.push(task);
+                    background_tasks.push(task);
                 }
                 Task::object_store_reader(config) => {
                     let config = Arc::new(config.to_owned());
@@ -419,7 +451,7 @@ impl Flow {
                         }
                         .instrument(span),
                     );
-                    task_list.push(task);
+                    background_tasks.push(task);
                 }
                 Task::object_store_writer(config) => {
                     let config = Arc::new(config.to_owned());
@@ -441,12 +473,12 @@ impl Flow {
                         }
                         .instrument(span),
                     );
-                    task_list.push(task);
+                    background_tasks.push(task);
                 }
             }
         }
 
-        task_list
+        (blocking_tasks, background_tasks)
     }
 }
 

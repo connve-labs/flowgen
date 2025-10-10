@@ -49,6 +49,7 @@ impl HttpServer {
     }
 
     /// Start the HTTP Server with all registered routes.
+    #[tracing::instrument(skip_all)]
     pub async fn start_server(&self, port: Option<u16>) -> Result<(), Error> {
         let mut server_started = self.server_started.lock().await;
         if *server_started {
@@ -66,9 +67,10 @@ impl HttpServer {
         let router = Router::new().nest("/api/flowgen", api_router);
         let server_port = port.unwrap_or(DEFAULT_HTTP_PORT);
         let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{server_port}")).await?;
-        info!("Starting HTTP Server on port: {}", server_port);
 
         *server_started = true;
+
+        info!("Starting HTTP Server on port: {}", server_port);
         axum::serve(listener, router).await.map_err(Error::IO)
     }
 
