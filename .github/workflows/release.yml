@@ -21,7 +21,7 @@ jobs:
       - name: Extract version from Cargo.toml
         id: version
         run: |
-          VERSION=$(cargo metadata --format-version 1 --no-deps | jq -r '.packages[] | select(.name == "flowgen") | .version')
+          VERSION=$(cargo metadata --format-version 1 --no-deps | jq -r '.packages[] | select(.name == "flowgen_worker") | .version')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Detect and tag new version
@@ -29,7 +29,7 @@ jobs:
         uses: salsify/action-detect-and-tag-new-version@v2
         with:
           version-command: |
-            cargo metadata --format-version 1 --no-deps | jq -r '.packages[] | select(.name == "flowgen") | .version'
+            cargo metadata --format-version 1 --no-deps | jq -r '.packages[] | select(.name == "flowgen_worker") | .version'
 
   build-and-push-docker:
     needs: detect-version
@@ -79,7 +79,7 @@ jobs:
           provenance: false
           sbom: false
           build-args: |
-            SERVICE_NAME=flowgen
+            SERVICE_NAME=flowgen_worker
             COMMIT=${{ github.sha }}
 
   create-release:

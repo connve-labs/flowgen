@@ -1199,30 +1199,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "flowgen"
-version = "0.2.0"
-dependencies = [
- "arrow",
- "config",
- "flowgen_core",
- "flowgen_http",
- "flowgen_nats",
- "flowgen_object_store",
- "flowgen_salesforce",
- "futures",
- "futures-util",
- "glob",
- "kube",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "flowgen_core"
 version = "0.2.0"
 dependencies = [
@@ -1336,6 +1312,30 @@ dependencies = [
  "tonic",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "flowgen_worker"
+version = "0.2.0"
+dependencies = [
+ "arrow",
+ "config",
+ "flowgen_core",
+ "flowgen_http",
+ "flowgen_nats",
+ "flowgen_object_store",
+ "flowgen_salesforce",
+ "futures",
+ "futures-util",
+ "glob",
+ "kube",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
