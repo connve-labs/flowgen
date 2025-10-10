@@ -10,8 +10,13 @@ RUN apk add --no-cache musl-dev pkgconfig openssl-dev openssl-libs-static protob
 
 # Copy dependencies and install them.
 COPY ./ ./
-RUN mkdir .cargo
-RUN echo "[source.vendored-sources]\ndirectory = \"vendor\"\n\n[source.\"git+https://gitlab.com/connve/platform/flowgen.git\"]\ngit = \"https://gitlab.com/connve/platform/flowgen.git\"\nreplace-with = \"vendored-sources\"" > .cargo/config
+RUN mkdir -p .cargo && \
+    printf '[source.vendored-sources]\n\
+directory = "vendor"\n\
+\n\
+[source."git+https://gitlab.com/connve/platform/flowgen.git"]\n\
+git = "https://gitlab.com/connve/platform/flowgen.git"\n\
+replace-with = "vendored-sources"\n' > .cargo/config.toml
 RUN cargo build --release --bin $SERVICE_NAME
 RUN cp ./target/release/$SERVICE_NAME /bin/$SERVICE_NAME
 
