@@ -231,15 +231,14 @@ pub struct Subscriber {
     task_context: Arc<flowgen_core::task::context::TaskContext>,
 }
 
-impl flowgen_core::task::runner::Runner for Subscriber {
-    type Error = Error;
-
-    /// Runs the subscriber by spawning TopicListener tasks for each topic.
+impl Subscriber {
+    /// Initializes the subscriber by establishing connections and authentication.
     ///
-    /// Establishes Salesforce connection, authenticates, and spawns a
-    /// TopicListener task for each configured topic.
-    #[tracing::instrument(skip(self), name = DEFAULT_MESSAGE_SUBJECT, fields(task = %self.config.name, task_id = self.current_task_id))]
-    async fn run(self) -> Result<(), Error> {
+    /// This method performs all setup operations that can fail, including:
+    /// - Creating gRPC service connection
+    /// - Authenticating with Salesforce
+    /// - Building Pub/Sub context
+    async fn init(self) -> Result<EventHandler, Error> {
         // Determine Pub/Sub endpoint
         let endpoint = match &self.config.endpoint {
             Some(endpoint) => endpoint,
@@ -275,32 +274,43 @@ impl flowgen_core::task::runner::Runner for Subscriber {
             .map_err(Error::PubSub)?;
         let pubsub = Arc::new(Mutex::new(pubsub));
 
-        // Spawn TopicListener.
-        let pubsub: Arc<Mutex<super::context::Context>> = Arc::clone(&pubsub);
-        let tx = self.tx.clone();
-        let config = Arc::clone(&self.config);
-        let current_task_id = self.current_task_id;
-        let task_context = Arc::clone(&self.task_context);
-        let event_handler = EventHandler {
-            config,
-            current_task_id,
-            tx,
+        // Create event handler
+        Ok(EventHandler {
+            config: self.config,
+            current_task_id: self.current_task_id,
+            tx: self.tx,
             pubsub,
-            task_context,
+            task_context: self.task_context,
+        })
+    }
+}
+
+impl flowgen_core::task::runner::Runner for Subscriber {
+    type Error = Error;
+
+    /// Runs the subscriber by initializing and spawning the event handler task.
+    #[tracing::instrument(skip(self), name = DEFAULT_MESSAGE_SUBJECT, fields(task = %self.config.name, task_id = self.current_task_id))]
+    async fn run(self) -> Result<(), Error> {
+        // Initialize runner task.
+        let event_handler = match self.init().await {
+            Ok(handler) => handler,
+            Err(e) => {
+                error!("{}", e);
+                return Ok(());
+            }
         };
 
-        // Spawn event handler task and wait for completion.
-        let handler_task = tokio::spawn(
+        // Spawn event handler task.
+        tokio::spawn(
             async move {
-                if let Err(err) = event_handler.handle().await {
-                    error!("{}", err);
+                if let Err(e) = event_handler.handle().await {
+                    error!("{}", e);
                 }
             }
             .instrument(tracing::Span::current()),
         );
 
-        // Wait for handler to complete.
-        handler_task.await.map_err(Error::TaskJoin)
+        Ok(())
     }
 }
 

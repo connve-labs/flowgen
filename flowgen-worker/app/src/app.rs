@@ -104,7 +104,13 @@ impl flowgen_core::task::runner::Runner for App {
             .collect::<Result<Vec<_>, _>>()?;
 
         // Create shared HTTP Server.
-        let http_server = Arc::new(flowgen_http::server::HttpServer::new());
+        let mut http_server_builder = flowgen_http::server::HttpServerBuilder::new();
+        if let Some(http_config) = &app_config.http_server {
+            if let Some(ref prefix) = http_config.routes_prefix {
+                http_server_builder = http_server_builder.routes_prefix(prefix.clone());
+            }
+        }
+        let http_server = Arc::new(http_server_builder.build());
 
         // Create shared cache if configured.
         let cache: Option<Arc<flowgen_nats::cache::Cache>> =
@@ -214,8 +220,21 @@ impl flowgen_core::task::runner::Runner for App {
             let span = tracing::Span::current();
             let flow_handle = tokio::spawn(
                 async move {
-                    if let Err(e) = flow.run().await {
-                        error!("Flow execution failed: {}", e);
+                    match flow.run().await {
+                        Ok(flow) => {
+                            // Flow setup complete, monitor spawned tasks
+                            if let Some(task_list) = flow.task_list {
+                                let results = futures_util::future::join_all(task_list).await;
+                                for (idx, result) in results.into_iter().enumerate() {
+                                    if let Err(e) = result {
+                                        error!("Task {} panicked: {}", idx, e);
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            error!("Flow execution failed: {}", e);
+                        }
                     }
                 }
                 .instrument(span),
@@ -251,7 +270,12 @@ impl flowgen_core::task::runner::Runner for App {
         background_flows.push(server_handle);
 
         // Wait for all background flows and server
-        futures_util::future::join_all(background_flows).await;
+        let results = futures_util::future::join_all(background_flows).await;
+        for result in results {
+            if let Err(e) = result {
+                error!("Background task panicked: {}", e);
+            }
+        }
 
         Ok(())
     }

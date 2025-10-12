@@ -107,6 +107,8 @@ pub struct FlowOptions {
 pub struct HttpServerOptions {
     /// Optional HTTP server port number (defaults to 3000).
     pub port: Option<u16>,
+    /// Optional path prefix for all routes (e.g., "/workers").
+    pub routes_prefix: Option<String>,
 }
 
 /// Host type for coordination.
@@ -431,14 +433,20 @@ mod tests {
 
     #[test]
     fn test_http_server_options_creation() {
-        let http_server_options = HttpServerOptions { port: Some(8080) };
+        let http_server_options = HttpServerOptions {
+            port: Some(8080),
+            routes_prefix: None,
+        };
 
         assert_eq!(http_server_options.port, Some(8080));
     }
 
     #[test]
     fn test_http_server_options_without_port() {
-        let http_server_options = HttpServerOptions { port: None };
+        let http_server_options = HttpServerOptions {
+            port: None,
+            routes_prefix: None,
+        };
 
         assert!(http_server_options.port.is_none());
     }
@@ -448,11 +456,18 @@ mod tests {
         let app_config = AppConfig {
             cache: None,
             flows: FlowOptions { dir: None },
-            http_server: Some(HttpServerOptions { port: Some(8080) }),
+            http_server: Some(HttpServerOptions {
+                port: Some(8080),
+                routes_prefix: Some("/workers".to_string()),
+            }),
             host: None,
         };
 
         assert!(app_config.http_server.is_some());
         assert_eq!(app_config.http_server.as_ref().unwrap().port, Some(8080));
+        assert_eq!(
+            app_config.http_server.as_ref().unwrap().routes_prefix,
+            Some("/workers".to_string())
+        );
     }
 }

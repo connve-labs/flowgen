@@ -580,14 +580,14 @@ mod tests {
 
     #[test]
     fn test_flow_builder_http_server() {
-        let server = Arc::new(flowgen_http::server::HttpServer::new());
+        let server = Arc::new(flowgen_http::server::HttpServerBuilder::new().build());
         let builder = FlowBuilder::new().http_server(server.clone());
         assert!(builder.http_server.is_some());
     }
 
     #[test]
     fn test_flow_builder_build_missing_config() {
-        let server = Arc::new(flowgen_http::server::HttpServer::new());
+        let server = Arc::new(flowgen_http::server::HttpServerBuilder::new().build());
 
         let result = FlowBuilder::new().http_server(server).build();
 
@@ -626,7 +626,7 @@ mod tests {
                 require_lease_election: None,
             },
         });
-        let server = Arc::new(flowgen_http::server::HttpServer::new());
+        let server = Arc::new(flowgen_http::server::HttpServerBuilder::new().build());
 
         let result = FlowBuilder::new()
             .config(flow_config.clone())
@@ -650,7 +650,7 @@ mod tests {
                 require_lease_election: None,
             },
         });
-        let server = Arc::new(flowgen_http::server::HttpServer::new());
+        let server = Arc::new(flowgen_http::server::HttpServerBuilder::new().build());
 
         let flow = FlowBuilder::new()
             .config(flow_config.clone())

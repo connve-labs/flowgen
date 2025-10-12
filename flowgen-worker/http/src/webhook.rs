@@ -242,9 +242,8 @@ impl flowgen_core::task::runner::Runner for Processor {
             crate::config::Method::HEAD => MethodRouter::new().head(handler),
         };
 
-        let webhook_path = format!("/workers{}", config.endpoint);
         self.http_server
-            .register_route(webhook_path, method_router)
+            .register_route(config.endpoint.clone(), method_router)
             .await;
 
         Ok(())
@@ -421,7 +420,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_processor_builder_http_server() {
-        let server = Arc::new(crate::server::HttpServer::new());
+        let server = Arc::new(crate::server::HttpServerBuilder::new().build());
         let builder = ProcessorBuilder::new().http_server(server.clone());
         assert!(builder.http_server.is_some());
     }
@@ -429,7 +428,7 @@ mod tests {
     #[tokio::test]
     async fn test_processor_builder_build_missing_config() {
         let (tx, _rx) = broadcast::channel(100);
-        let server = Arc::new(crate::server::HttpServer::new());
+        let server = Arc::new(crate::server::HttpServerBuilder::new().build());
 
         let result = ProcessorBuilder::new()
             .sender(tx)
@@ -454,7 +453,7 @@ mod tests {
             headers: None,
             credentials: None,
         });
-        let server = Arc::new(crate::server::HttpServer::new());
+        let server = Arc::new(crate::server::HttpServerBuilder::new().build());
 
         let result = ProcessorBuilder::new()
             .config(config)
@@ -513,7 +512,7 @@ mod tests {
             }),
             credentials: None,
         });
-        let server = Arc::new(crate::server::HttpServer::new());
+        let server = Arc::new(crate::server::HttpServerBuilder::new().build());
 
         let result = ProcessorBuilder::new()
             .config(config.clone())
@@ -541,7 +540,7 @@ mod tests {
             headers: None,
             credentials: None,
         });
-        let server = Arc::new(crate::server::HttpServer::new());
+        let server = Arc::new(crate::server::HttpServerBuilder::new().build());
 
         let processor = ProcessorBuilder::new()
             .config(config.clone())
