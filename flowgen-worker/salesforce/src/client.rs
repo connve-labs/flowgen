@@ -12,25 +12,31 @@ use std::path::PathBuf;
 /// Errors that can occur during Salesforce client operations.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    /// Input/output operation failed.
-    #[error("IO operation failed on path {path}: {source}")]
-    IO {
+    /// Failed to read credentials file.
+    #[error("Failed to read credentials file at {path}: {source}")]
+    ReadCredentials {
         path: std::path::PathBuf,
         #[source]
         source: std::io::Error,
     },
     /// Failed to parse credentials JSON file.
-    #[error(transparent)]
-    ParseCredentials(#[from] serde_json::Error),
+    #[error("Failed to parse credentials JSON: {source}")]
+    ParseCredentials {
+        #[source]
+        source: serde_json::Error,
+    },
     /// Invalid URL format in credentials or configuration.
-    #[error(transparent)]
-    ParseUrl(#[from] url::ParseError),
+    #[error("Invalid URL format: {source}")]
+    ParseUrl {
+        #[source]
+        source: url::ParseError,
+    },
+    /// OAuth2 token exchange failed.
+    #[error("OAuth2 token exchange failed: {0}")]
+    TokenExchange(String),
     /// Required builder attribute was not provided.
     #[error("Missing required attribute: {}", _0)]
     MissingRequiredAttribute(String),
-    /// General error with descriptive message.
-    #[error("Other error: {}", _0)]
-    Other(String),
 }
 /// Used to store Salesforce Client credentials.
 #[derive(Serialize, Deserialize)]
@@ -77,12 +83,13 @@ impl flowgen_core::client::Client for Client {
     /// It then exchanges them for auth_token and refresh_token or returns error.
     async fn connect(mut self) -> Result<Self, Error> {
         // Load credentials from file
-        let credentials_string = fs::read_to_string(&self.credentials).map_err(|e| Error::IO {
-            path: self.credentials.clone(),
-            source: e,
-        })?;
-        let credentials: Credentials =
-            serde_json::from_str(&credentials_string).map_err(Error::ParseCredentials)?;
+        let credentials_string =
+            fs::read_to_string(&self.credentials).map_err(|e| Error::ReadCredentials {
+                path: self.credentials.clone(),
+                source: e,
+            })?;
+        let credentials: Credentials = serde_json::from_str(&credentials_string)
+            .map_err(|e| Error::ParseCredentials { source: e })?;
 
         // Build OAuth2 client
         let oauth2_client = BasicClient::new(
@@ -92,13 +99,13 @@ impl flowgen_core::client::Client for Client {
                 "{0}/services/oauth2/authorize",
                 credentials.instance_url.to_owned()
             ))
-            .map_err(Error::ParseUrl)?,
+            .map_err(|e| Error::ParseUrl { source: e })?,
             Some(
                 TokenUrl::new(format!(
                     "{0}/services/oauth2/token",
                     credentials.instance_url.to_owned()
                 ))
-                .map_err(Error::ParseUrl)?,
+                .map_err(|e| Error::ParseUrl { source: e })?,
             ),
         );
 
@@ -107,7 +114,7 @@ impl flowgen_core::client::Client for Client {
             .exchange_client_credentials()
             .request_async(async_http_client)
             .await
-            .map_err(|e| Error::Other(e.to_string()))?;
+            .map_err(|e| Error::TokenExchange(e.to_string()))?;
 
         self.oauth2_client = Some(oauth2_client);
         self.token_result = Some(token_result);
@@ -189,7 +196,7 @@ mod tests {
             .unwrap();
         let result = client.connect().await;
         let _ = fs::remove_file(path);
-        assert!(matches!(result, Err(Error::ParseCredentials(..))));
+        assert!(matches!(result, Err(Error::ParseCredentials { .. })));
     }
 
     #[tokio::test]
@@ -215,7 +222,7 @@ mod tests {
             .unwrap();
         let result = client.connect().await;
         let _ = fs::remove_file(path);
-        assert!(matches!(result, Err(Error::ParseUrl(..))));
+        assert!(matches!(result, Err(Error::ParseUrl { .. })));
     }
 
     #[tokio::test]
@@ -226,6 +233,6 @@ mod tests {
         path.push(format!("nonexistent_{}.json", std::process::id()));
         let client = Builder::new().credentials_path(path).build().unwrap();
         let result = client.connect().await;
-        assert!(matches!(result, Err(Error::IO { .. })));
+        assert!(matches!(result, Err(Error::ReadCredentials { .. })));
     }
 }

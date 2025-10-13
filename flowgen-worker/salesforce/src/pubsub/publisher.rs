@@ -27,17 +27,26 @@ pub enum Error {
     #[error(transparent)]
     SerdeExt(#[from] flowgen_core::serde::Error),
     /// Apache Avro serialization error.
-    #[error(transparent)]
-    SerdeAvro(#[from] serde_avro_fast::ser::SerError),
+    #[error("Avro serialization failed: {source}")]
+    SerdeAvro {
+        #[source]
+        source: serde_avro_fast::ser::SerError,
+    },
     /// Avro schema parsing error.
-    #[error(transparent)]
-    SerdeSchema(#[from] serde_avro_fast::schema::SchemaError),
+    #[error("Avro schema parsing failed: {source}")]
+    SerdeSchema {
+        #[source]
+        source: serde_avro_fast::schema::SchemaError,
+    },
     /// Template rendering error for dynamic configuration.
     #[error(transparent)]
     Render(#[from] flowgen_core::config::Error),
     /// Failed to send event through broadcast channel.
-    #[error(transparent)]
-    SendMessage(#[from] tokio::sync::broadcast::error::SendError<Event>),
+    #[error("Failed to send event message: {source}")]
+    SendMessage {
+        #[source]
+        source: tokio::sync::broadcast::error::SendError<Event>,
+    },
     /// Flowgen core event system error.
     #[error(transparent)]
     Event(#[from] flowgen_core::event::Error),
@@ -91,7 +100,8 @@ impl EventHandler {
 
         let mut serializer_config = self.serializer_config.lock().await;
         let serialized_payload: Vec<u8> =
-            serde_avro_fast::to_datum_vec(&publish_payload, &mut serializer_config)?;
+            serde_avro_fast::to_datum_vec(&publish_payload, &mut serializer_config)
+                .map_err(|e| Error::SerdeAvro { source: e })?;
 
         let mut events = Vec::new();
         let pe = ProducerEvent {
@@ -189,7 +199,10 @@ impl flowgen_core::task::runner::Runner for Publisher {
             .await?
             .into_inner();
 
-        let schema: Schema = schema_info.schema_json.parse()?;
+        let schema: Schema = schema_info
+            .schema_json
+            .parse()
+            .map_err(|e| Error::SerdeSchema { source: e })?;
 
         // Leak the schema to get a 'static reference.
         // This is intentional and safe in this context since the schema

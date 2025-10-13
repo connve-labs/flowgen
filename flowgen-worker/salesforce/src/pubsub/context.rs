@@ -20,10 +20,13 @@ pub enum Error {
     #[error("Missing required attribute: {}", _0)]
     MissingRequiredAttribute(String),
     /// Invalid metadata value for gRPC headers.
-    #[error(transparent)]
-    InvalidMetadataValue(#[from] tonic::metadata::errors::InvalidMetadataValue),
+    #[error("Invalid metadata value for gRPC headers: {source}")]
+    InvalidMetadataValue {
+        #[source]
+        source: tonic::metadata::errors::InvalidMetadataValue,
+    },
     /// gRPC transport or communication error.
-    #[error(transparent)]
+    #[error("gRPC transport error: {0}")]
     Tonic(Box<tonic::Status>),
 }
 
@@ -74,19 +77,22 @@ impl Context {
             .ok_or_else(Error::MissingTokenResponse)?
             .access_token()
             .secret()
-            .parse()?;
+            .parse()
+            .map_err(|e| Error::InvalidMetadataValue { source: e })?;
 
         let instance_url: tonic::metadata::AsciiMetadataValue = client
             .instance_url
             .as_ref()
             .ok_or_else(|| Error::MissingRequiredAttribute("instance_url".to_string()))?
-            .parse()?;
+            .parse()
+            .map_err(|e| Error::InvalidMetadataValue { source: e })?;
 
         let tenant_id: tonic::metadata::AsciiMetadataValue = client
             .tenant_id
             .as_ref()
             .ok_or_else(|| Error::MissingRequiredAttribute("tenant_id".to_string()))?
-            .parse()?;
+            .parse()
+            .map_err(|e| Error::InvalidMetadataValue { source: e })?;
 
         let interceptor = ContextInterceptor {
             auth_header,
@@ -212,6 +218,6 @@ mod tests {
             .unwrap();
         let _ = fs::remove_file(path);
         let result = Context::new(service, client);
-        assert!(matches!(result, Err(Error::MissingTokenResponse(..))));
+        assert!(matches!(result, Err(Error::MissingTokenResponse())));
     }
 }

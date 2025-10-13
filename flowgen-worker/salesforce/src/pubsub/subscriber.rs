@@ -28,14 +28,23 @@ pub enum Error {
     #[error(transparent)]
     Event(#[from] flowgen_core::event::Error),
     /// Async task join error.
-    #[error(transparent)]
-    TaskJoin(#[from] tokio::task::JoinError),
+    #[error("Async task join failed: {source}")]
+    TaskJoin {
+        #[source]
+        source: tokio::task::JoinError,
+    },
     /// Failed to send event through broadcast channel.
-    #[error(transparent)]
-    SendMessage(#[from] tokio::sync::broadcast::error::SendError<Event>),
+    #[error("Failed to send event message: {source}")]
+    SendMessage {
+        #[source]
+        source: tokio::sync::broadcast::error::SendError<Event>,
+    },
     /// Binary encoding or decoding error.
-    #[error(transparent)]
-    Bincode(#[from] bincode::Error),
+    #[error("Binary encoding/decoding failed: {source}")]
+    Bincode {
+        #[source]
+        source: bincode::Error,
+    },
     /// Flowgen core service error.
     #[error(transparent)]
     Service(#[from] flowgen_core::service::Error),
@@ -46,8 +55,11 @@ pub enum Error {
     #[error("Cache error: {_0}")]
     Cache(String),
     /// JSON serialization or deserialization error.
-    #[error(transparent)]
-    Serde(#[from] serde_json::Error),
+    #[error("JSON serialization/deserialization failed: {source}")]
+    Serde {
+        #[source]
+        source: serde_json::Error,
+    },
     /// Host coordination error.
     #[error(transparent)]
     Host(#[from] flowgen_core::host::Error),
@@ -201,7 +213,9 @@ impl EventHandler {
                                 .map_err(Error::Event)?;
 
                             info!("{}: {}", DEFAULT_LOG_MESSAGE, e.subject);
-                            self.tx.send(e)?;
+                            self.tx
+                                .send(e)
+                                .map_err(|e| Error::SendMessage { source: e })?;
                         }
                     }
                 }
