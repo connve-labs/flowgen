@@ -71,7 +71,7 @@ impl IntoResponse for Error {
 
 /// Event handler for processing incoming webhooks.
 #[derive(Clone, Debug)]
-struct EventHandler {
+pub struct EventHandler {
     /// Processor configuration.
     config: Arc<super::config::Processor>,
     /// Event sender channel.
@@ -204,13 +204,12 @@ pub struct Processor {
     _task_context: Arc<flowgen_core::task::context::TaskContext>,
 }
 
-impl Processor {
-    /// Initializes the processor by loading credentials and registering the webhook route.
-    ///
-    /// This method performs all setup operations that can fail, including:
-    /// - Loading authentication credentials from filesystem
-    /// - Registering the webhook route with the HTTP server
-    async fn init(self) -> Result<(), Error> {
+#[async_trait::async_trait]
+impl flowgen_core::task::runner::Runner for Processor {
+    type Error = Error;
+    type EventHandler = EventHandler;
+
+    async fn init(&self) -> Result<EventHandler, Error> {
         let config = Arc::clone(&self.config);
 
         // Load credentials at task creation time.
@@ -223,15 +222,31 @@ impl Processor {
         };
 
         let event_handler = EventHandler {
-            config: self.config,
-            tx: self.tx,
+            config: Arc::clone(&self.config),
+            tx: self.tx.clone(),
             current_task_id: self.current_task_id,
             credentials,
         };
 
+        Ok(event_handler)
+    }
+
+    #[tracing::instrument(skip(self), name = DEFAULT_MESSAGE_SUBJECT, fields(task = %self.config.name, task_id = self.current_task_id))]
+    async fn run(self) -> Result<(), Error> {
+        // Initialize runner task.
+        let event_handler = match self.init().await {
+            Ok(handler) => handler,
+            Err(e) => {
+                error!("{}", e);
+                return Ok(());
+            }
+        };
+
+        let config = Arc::clone(&self.config);
         let span = tracing::Span::current();
         let handler = move |headers: HeaderMap, request: Request<Body>| {
             let span = span.clone();
+            let event_handler = event_handler.clone();
             async move { event_handler.handle(headers, request).await }.instrument(span)
         };
 
@@ -247,20 +262,6 @@ impl Processor {
         self.http_server
             .register_route(config.endpoint.clone(), method_router)
             .await;
-
-        Ok(())
-    }
-}
-
-impl flowgen_core::task::runner::Runner for Processor {
-    type Error = Error;
-
-    #[tracing::instrument(skip(self), name = DEFAULT_MESSAGE_SUBJECT, fields(task = %self.config.name, task_id = self.current_task_id))]
-    async fn run(self) -> Result<(), Error> {
-        // Initialize runner task.
-        if let Err(e) = self.init().await {
-            error!("{}", e);
-        }
 
         Ok(())
     }

@@ -41,7 +41,7 @@ pub enum Error {
     Host(#[source] crate::host::Error),
 }
 /// Event handler for generating scheduled events.
-struct EventHandler {
+pub struct EventHandler {
     config: Arc<super::config::Subscriber>,
     tx: Sender<Event>,
     current_task_id: usize,
@@ -145,17 +145,23 @@ pub struct Subscriber {
     task_context: Arc<crate::task::context::TaskContext>,
 }
 
+#[async_trait::async_trait]
 impl crate::task::runner::Runner for Subscriber {
     type Error = Error;
+    type EventHandler = EventHandler;
+
+    async fn init(&self) -> Result<Self::EventHandler, Self::Error> {
+        Ok(EventHandler {
+            config: Arc::clone(&self.config),
+            tx: self.tx.clone(),
+            current_task_id: self.current_task_id,
+            task_context: Arc::clone(&self.task_context),
+        })
+    }
 
     #[tracing::instrument(skip(self), name = DEFAULT_MESSAGE_SUBJECT, fields(task = %self.config.name, task_id = self.current_task_id))]
     async fn run(self) -> Result<(), Error> {
-        let event_handler = EventHandler {
-            config: self.config,
-            tx: self.tx,
-            current_task_id: self.current_task_id,
-            task_context: self.task_context,
-        };
+        let event_handler = self.init().await?;
 
         // Spawn event handler task.
         tokio::spawn(

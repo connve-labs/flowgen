@@ -57,7 +57,7 @@ pub enum Error {
 ///
 /// Subscribes to a topic, deserializes Avro payloads, and forwards events
 /// to the event channel. Supports durable consumers with replay ID caching.
-struct EventHandler {
+pub struct EventHandler {
     /// Salesforce Pub/Sub client context
     pubsub: Arc<Mutex<super::context::Context>>,
     /// Subscriber configuration
@@ -231,14 +231,18 @@ pub struct Subscriber {
     task_context: Arc<flowgen_core::task::context::TaskContext>,
 }
 
-impl Subscriber {
+#[async_trait::async_trait]
+impl flowgen_core::task::runner::Runner for Subscriber {
+    type Error = Error;
+    type EventHandler = EventHandler;
+
     /// Initializes the subscriber by establishing connections and authentication.
     ///
     /// This method performs all setup operations that can fail, including:
     /// - Creating gRPC service connection
     /// - Authenticating with Salesforce
     /// - Building Pub/Sub context
-    async fn init(self) -> Result<EventHandler, Error> {
+    async fn init(&self) -> Result<EventHandler, Error> {
         // Determine Pub/Sub endpoint
         let endpoint = match &self.config.endpoint {
             Some(endpoint) => endpoint,
@@ -276,17 +280,13 @@ impl Subscriber {
 
         // Create event handler
         Ok(EventHandler {
-            config: self.config,
+            config: Arc::clone(&self.config),
             current_task_id: self.current_task_id,
-            tx: self.tx,
+            tx: self.tx.clone(),
             pubsub,
-            task_context: self.task_context,
+            task_context: Arc::clone(&self.task_context),
         })
     }
-}
-
-impl flowgen_core::task::runner::Runner for Subscriber {
-    type Error = Error;
 
     /// Runs the subscriber by initializing and spawning the event handler task.
     #[tracing::instrument(skip(self), name = DEFAULT_MESSAGE_SUBJECT, fields(task = %self.config.name, task_id = self.current_task_id))]

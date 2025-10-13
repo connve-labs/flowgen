@@ -64,7 +64,7 @@ pub enum Error {
 }
 
 /// Event handler for processing NATS messages.
-struct EventHandler {
+pub struct EventHandler {
     consumer: jetstream::consumer::Consumer<jetstream::consumer::pull::Config>,
     tx: Sender<Event>,
     current_task_id: usize,
@@ -109,14 +109,18 @@ pub struct Subscriber {
     _task_context: Arc<flowgen_core::task::context::TaskContext>,
 }
 
-impl Subscriber {
+#[async_trait::async_trait]
+impl flowgen_core::task::runner::Runner for Subscriber {
+    type Error = Error;
+    type EventHandler = EventHandler;
+
     /// Initializes the subscriber by establishing connection and creating consumer.
     ///
     /// This method performs all setup operations that can fail, including:
     /// - Connecting to NATS with credentials
     /// - Getting or creating JetStream stream and consumer
     /// - Validating consumer configuration
-    async fn init(self) -> Result<EventHandler, Error> {
+    async fn init(&self) -> Result<EventHandler, Error> {
         let client = crate::client::ClientBuilder::new()
             .credentials_path(self.config.credentials.clone())
             .build()?
@@ -152,9 +156,9 @@ impl Subscriber {
 
             Ok(EventHandler {
                 consumer,
-                tx: self.tx,
+                tx: self.tx.clone(),
                 current_task_id: self.current_task_id,
-                config: self.config,
+                config: Arc::clone(&self.config),
             })
         } else {
             Err(Error::Other(
@@ -162,10 +166,6 @@ impl Subscriber {
             ))
         }
     }
-}
-
-impl flowgen_core::task::runner::Runner for Subscriber {
-    type Error = Error;
 
     #[tracing::instrument(skip(self), name = DEFAULT_MESSAGE_SUBJECT, fields(task = %self.config.name, task_id = self.current_task_id))]
     async fn run(self) -> Result<(), Error> {

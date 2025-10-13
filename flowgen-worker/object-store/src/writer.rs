@@ -40,7 +40,7 @@ pub enum Error {
 }
 
 /// Handles processing of individual events by writing them to object storage.
-struct EventHandler {
+pub struct EventHandler {
     /// Writer configuration settings.
     config: Arc<super::config::Writer>,
     /// Object store client for writing data.
@@ -146,7 +146,11 @@ pub struct Writer {
     _task_context: Arc<flowgen_core::task::context::TaskContext>,
 }
 
-impl Writer {
+#[async_trait::async_trait]
+impl flowgen_core::task::runner::Runner for Writer {
+    type Error = Error;
+    type EventHandler = EventHandler;
+
     /// Initializes the writer by establishing object store client connection.
     ///
     /// This method performs all setup operations that can fail, including:
@@ -172,10 +176,6 @@ impl Writer {
 
         Ok(event_handler)
     }
-}
-
-impl flowgen_core::task::runner::Runner for Writer {
-    type Error = Error;
 
     #[tracing::instrument(skip(self), name = DEFAULT_MESSAGE_SUBJECT, fields(task = %self.config.name, task_id = self.current_task_id))]
     async fn run(mut self) -> Result<(), Self::Error> {

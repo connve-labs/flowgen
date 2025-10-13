@@ -1230,6 +1230,7 @@ name = "flowgen_http"
 version = "0.2.0"
 dependencies = [
  "arrow-json",
+ "async-trait",
  "axum 0.8.4",
  "base64 0.22.1",
  "chrono",

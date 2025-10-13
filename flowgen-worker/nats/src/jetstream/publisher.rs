@@ -41,7 +41,7 @@ pub enum Error {
     Host(#[from] flowgen_core::host::Error),
 }
 
-struct EventHandler {
+pub struct EventHandler {
     jetstream: Arc<Mutex<async_nats::jetstream::Context>>,
     current_task_id: usize,
 }
@@ -78,7 +78,11 @@ pub struct Publisher {
     _task_context: Arc<flowgen_core::task::context::TaskContext>,
 }
 
-impl Publisher {
+#[async_trait::async_trait]
+impl flowgen_core::task::runner::Runner for Publisher {
+    type Error = Error;
+    type EventHandler = EventHandler;
+
     /// Initializes the publisher by establishing connection and creating/updating stream.
     ///
     /// This method performs all setup operations that can fail, including:
@@ -137,10 +141,6 @@ impl Publisher {
             Err(Error::MissingClient())
         }
     }
-}
-
-impl flowgen_core::task::runner::Runner for Publisher {
-    type Error = Error;
 
     #[tracing::instrument(skip(self), name = DEFAULT_MESSAGE_SUBJECT, fields(task = %self.config.name, task_id = self.current_task_id))]
     async fn run(mut self) -> Result<(), Self::Error> {

@@ -66,7 +66,7 @@ pub enum Error {
 
 /// Event handler for processing HTTP requests.
 #[derive(Debug)]
-struct EventHandler {
+pub struct EventHandler {
     /// HTTP client instance.
     client: Arc<reqwest::Client>,
     /// Processor configuration.
@@ -176,7 +176,11 @@ pub struct Processor {
     _task_context: Arc<flowgen_core::task::context::TaskContext>,
 }
 
-impl Processor {
+#[async_trait::async_trait]
+impl flowgen_core::task::runner::Runner for Processor {
+    type Error = Error;
+    type EventHandler = EventHandler;
+
     /// Initializes the processor by building the HTTP client.
     async fn init(&self) -> Result<EventHandler, Error> {
         let client = reqwest::ClientBuilder::new().https_only(true).build()?;
@@ -191,10 +195,6 @@ impl Processor {
 
         Ok(event_handler)
     }
-}
-
-impl flowgen_core::task::runner::Runner for Processor {
-    type Error = Error;
 
     #[tracing::instrument(skip(self), name = DEFAULT_MESSAGE_SUBJECT, fields(task = %self.config.name, task_id = self.current_task_id))]
     async fn run(mut self) -> Result<(), Error> {

@@ -63,7 +63,7 @@ fn transform_keys(value: &mut Value) {
 }
 
 /// Handles individual event conversion operations.
-struct EventHandler {
+pub struct EventHandler {
     /// Processor configuration settings.
     config: Arc<super::config::Processor>,
     /// Channel sender for processed events.
@@ -144,12 +144,16 @@ pub struct Processor {
     _task_context: Arc<crate::task::context::TaskContext>,
 }
 
-impl Processor {
+#[async_trait::async_trait]
+impl crate::task::runner::Runner for Processor {
+    type Error = Error;
+    type EventHandler = EventHandler;
+
     /// Initializes the processor by parsing and configuring the serializer.
     ///
     /// This method performs all setup operations that can fail, including:
     /// - Parsing Avro schema if converting to Avro format
-    async fn init(&self) -> Result<EventHandler, Error> {
+    async fn init(&self) -> Result<Self::EventHandler, Self::Error> {
         let serializer = match self.config.target_format {
             super::config::TargetFormat::Avro => {
                 let schema_string = self
@@ -184,10 +188,6 @@ impl Processor {
 
         Ok(event_handler)
     }
-}
-
-impl crate::task::runner::Runner for Processor {
-    type Error = Error;
 
     #[tracing::instrument(skip(self), name = DEFAULT_MESSAGE_SUBJECT, fields(task = %self.config.name, task_id = self.current_task_id))]
     async fn run(mut self) -> Result<(), Error> {

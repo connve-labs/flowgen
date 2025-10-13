@@ -58,15 +58,14 @@ pub struct App {
     pub config: AppConfig,
 }
 
-impl flowgen_core::task::runner::Runner for App {
+impl App {
     /// Loads flow configurations from disk, builds flows, starts HTTP server, and runs all tasks concurrently.
     ///
     /// This method discovers flow configuration files using the glob pattern specified in the app config,
     /// parses each configuration file, builds flow instances, registers HTTP routes, starts the HTTP server,
     /// and finally runs all flow tasks concurrently along with the server.
-    type Error = Error;
     #[tracing::instrument(skip(self), name = "app")]
-    async fn run(self) -> Result<(), Error> {
+    pub async fn start(self) -> Result<(), Error> {
         let app_config = Arc::new(self.config);
 
         let glob_pattern = app_config

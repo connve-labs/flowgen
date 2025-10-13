@@ -59,7 +59,7 @@ pub enum Error {
 }
 
 /// Event handler for processing and publishing events to Salesforce Pub/Sub.
-struct EventHandler {
+pub struct EventHandler {
     /// Publisher configuration.
     config: Arc<super::config::Publisher>,
     /// Pub/Sub connection context.
@@ -137,7 +137,11 @@ pub struct Publisher {
     _task_context: Arc<flowgen_core::task::context::TaskContext>,
 }
 
-impl Publisher {
+#[async_trait::async_trait]
+impl flowgen_core::task::runner::Runner for Publisher {
+    type Error = Error;
+    type EventHandler = EventHandler;
+
     /// Initializes the publisher by establishing connection and retrieving schema.
     ///
     /// This method performs all setup operations that can fail, including:
@@ -214,10 +218,6 @@ impl Publisher {
 
         Ok(event_handler)
     }
-}
-
-impl flowgen_core::task::runner::Runner for Publisher {
-    type Error = Error;
 
     #[tracing::instrument(skip(self), name = DEFAULT_MESSAGE_SUBJECT, fields(task = %self.config.name, task_id = self.current_task_id))]
     async fn run(mut self) -> Result<(), Self::Error> {
