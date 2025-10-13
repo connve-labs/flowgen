@@ -22,8 +22,11 @@ const DEFAULT_MESSAGE_SUBJECT: &str = "generate";
 #[non_exhaustive]
 pub enum Error {
     /// Failed to send event through broadcast channel.
-    #[error(transparent)]
-    SendMessage(#[from] tokio::sync::broadcast::error::SendError<Event>),
+    #[error("Failed to send event message: {source}")]
+    SendMessage {
+        #[source]
+        source: tokio::sync::broadcast::error::SendError<Event>,
+    },
     /// Event construction failed.
     #[error(transparent)]
     Event(#[from] crate::event::Error),
@@ -34,8 +37,11 @@ pub enum Error {
     #[error("Cache error: {_0}")]
     Cache(String),
     /// System time error when getting current timestamp.
-    #[error(transparent)]
-    SystemTime(#[from] std::time::SystemTimeError),
+    #[error("System time error: {source}")]
+    SystemTime {
+        #[source]
+        source: std::time::SystemTimeError,
+    },
     /// Host coordination error.
     #[error("Host coordination error")]
     Host(#[source] crate::host::Error),
@@ -110,11 +116,16 @@ impl EventHandler {
                 .subject(subject.clone())
                 .current_task_id(self.current_task_id)
                 .build()?;
-            self.tx.send(e)?;
+            self.tx
+                .send(e)
+                .map_err(|e| Error::SendMessage { source: e })?;
             info!("{}: {}", DEFAULT_LOG_MESSAGE, subject);
 
             // Update cache with current time after sending the event.
-            let current_time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+            let current_time = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|e| Error::SystemTime { source: e })?
+                .as_secs();
             if let Some(cache) = cache {
                 if let Err(cache_err) = cache.put(&cache_key, current_time.to_string().into()).await
                 {

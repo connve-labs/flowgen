@@ -23,17 +23,26 @@ const DEFAULT_MESSAGE_SUBJECT: &str = "convert";
 #[non_exhaustive]
 pub enum Error {
     /// Failed to send converted event through broadcast channel.
-    #[error(transparent)]
-    SendMessage(#[from] tokio::sync::broadcast::error::SendError<Event>),
+    #[error("Failed to send event message: {source}")]
+    SendMessage {
+        #[source]
+        source: tokio::sync::broadcast::error::SendError<Event>,
+    },
     /// Event construction or processing failed.
     #[error(transparent)]
     Event(#[from] crate::event::Error),
     /// Avro serialization failed.
-    #[error(transparent)]
-    SerdeAvro(#[from] serde_avro_fast::ser::SerError),
+    #[error("Avro serialization failed: {source}")]
+    SerdeAvro {
+        #[source]
+        source: serde_avro_fast::ser::SerError,
+    },
     /// Avro schema parsing failed.
-    #[error(transparent)]
-    SerdeSchema(#[from] serde_avro_fast::schema::SchemaError),
+    #[error("Avro schema parsing failed: {source}")]
+    SerdeSchema {
+        #[source]
+        source: serde_avro_fast::schema::SchemaError,
+    },
     /// Required builder attribute was not provided.
     #[error("Missing required attribute: {}", _0)]
     MissingRequiredAttribute(String),
@@ -96,7 +105,8 @@ impl EventHandler {
 
                     let mut serializer_config = serializer_opts.serializer_config.lock().await;
                     let raw_bytes: Vec<u8> =
-                        serde_avro_fast::to_datum_vec(&data, &mut serializer_config)?;
+                        serde_avro_fast::to_datum_vec(&data, &mut serializer_config)
+                            .map_err(|e| Error::SerdeAvro { source: e })?;
 
                     EventData::Avro(AvroData {
                         schema: serializer_opts.schema_string.clone(),
@@ -124,7 +134,9 @@ impl EventHandler {
             .build()?;
 
         info!("{}: {}", DEFAULT_LOG_MESSAGE, e.subject);
-        self.tx.send(e)?;
+        self.tx
+            .send(e)
+            .map_err(|e| Error::SendMessage { source: e })?;
         Ok(())
     }
 }
@@ -163,7 +175,9 @@ impl crate::task::runner::Runner for Processor {
                     .clone()
                     .ok_or_else(|| Error::MissingRequiredAttribute("schema".to_string()))?;
 
-                let schema: serde_avro_fast::Schema = schema_string.parse()?;
+                let schema: serde_avro_fast::Schema = schema_string
+                    .parse()
+                    .map_err(|e| Error::SerdeSchema { source: e })?;
 
                 // Leak the schema to get a 'static reference.
                 // This is intentional and safe in this context since the schema
