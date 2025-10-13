@@ -10,15 +10,24 @@ pub enum Error {
     /// Client authentication or connection error (transparently wraps `crate::client::Error`).
     #[error(transparent)]
     ClientAuth(#[from] crate::client::Error),
-    /// KV store entry access/processing error (transparently wraps `async_nats::jetstream::kv::EntryError`).
-    #[error(transparent)]
-    KVEntry(#[from] async_nats::jetstream::kv::EntryError),
-    /// KV store `put` operation error (transparently wraps `async_nats::jetstream::kv::PutError`).
-    #[error(transparent)]
-    KVPut(#[from] async_nats::jetstream::kv::PutError),
-    /// KV bucket creation error (transparently wraps `async_nats::jetstream::context::CreateKeyValueError`).
-    #[error(transparent)]
-    KVBucketCreate(#[from] async_nats::jetstream::context::CreateKeyValueError),
+    /// KV store entry access/processing error.
+    #[error("KV store entry access failed: {source}")]
+    KVEntry {
+        #[source]
+        source: async_nats::jetstream::kv::EntryError,
+    },
+    /// KV store `put` operation error.
+    #[error("KV store put operation failed: {source}")]
+    KVPut {
+        #[source]
+        source: async_nats::jetstream::kv::PutError,
+    },
+    /// KV bucket creation error.
+    #[error("KV bucket creation failed: {source}")]
+    KVBucketCreate {
+        #[source]
+        source: async_nats::jetstream::context::CreateKeyValueError,
+    },
     /// Expected non-empty buffer from KV store was empty or missing.
     #[error("No value in provided buffer")]
     EmptyBuffer(),
@@ -76,7 +85,7 @@ impl Cache {
                     ..Default::default()
                 })
                 .await
-                .map_err(Error::KVBucketCreate)?,
+                .map_err(|e| Error::KVBucketCreate { source: e })?,
         };
 
         self.store = Some(store);
@@ -102,7 +111,7 @@ impl flowgen_core::cache::Cache for Cache {
         store
             .put(key, value)
             .await
-            .map_err(|e| Box::new(Error::KVPut(e)) as flowgen_core::cache::Error)?;
+            .map_err(|e| Box::new(Error::KVPut { source: e }) as flowgen_core::cache::Error)?;
         Ok(())
     }
 
@@ -122,7 +131,7 @@ impl flowgen_core::cache::Cache for Cache {
         let bytes = store
             .get(key)
             .await
-            .map_err(|e| Box::new(Error::KVEntry(e)) as flowgen_core::cache::Error)?
+            .map_err(|e| Box::new(Error::KVEntry { source: e }) as flowgen_core::cache::Error)?
             .ok_or_else(|| Box::new(Error::EmptyBuffer()) as flowgen_core::cache::Error)?;
         Ok(bytes)
     }

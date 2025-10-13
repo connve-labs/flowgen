@@ -16,17 +16,29 @@ pub enum Error {
     #[error(transparent)]
     ClientAuth(#[from] crate::client::Error),
     /// Failed to publish message to JetStream.
-    #[error(transparent)]
-    Publish(#[from] async_nats::jetstream::context::PublishError),
+    #[error("Failed to publish message to JetStream: {source}")]
+    Publish {
+        #[source]
+        source: async_nats::jetstream::context::PublishError,
+    },
     /// Failed to create JetStream stream.
-    #[error(transparent)]
-    CreateStream(#[from] async_nats::jetstream::context::CreateStreamError),
+    #[error("Failed to create JetStream stream: {source}")]
+    CreateStream {
+        #[source]
+        source: async_nats::jetstream::context::CreateStreamError,
+    },
     /// Failed to get existing JetStream stream.
-    #[error(transparent)]
-    GetStream(#[from] async_nats::jetstream::context::GetStreamError),
+    #[error("Failed to get JetStream stream: {source}")]
+    GetStream {
+        #[source]
+        source: async_nats::jetstream::context::GetStreamError,
+    },
     /// Failed to make request to JetStream.
-    #[error(transparent)]
-    Request(#[from] async_nats::jetstream::context::RequestError),
+    #[error("Failed to make request to JetStream: {source}")]
+    Request {
+        #[source]
+        source: async_nats::jetstream::context::RequestError,
+    },
     /// Error converting event to message format.
     #[error(transparent)]
     MessageConversion(#[from] super::message::Error),
@@ -60,7 +72,8 @@ impl EventHandler {
             .lock()
             .await
             .send_publish(event.subject.clone(), e)
-            .await?;
+            .await
+            .map_err(|e| Error::Publish { source: e })?;
         Ok(())
     }
 }
@@ -116,17 +129,30 @@ impl flowgen_core::task::runner::Runner for Publisher {
 
             match stream {
                 Ok(_) => {
-                    let mut subjects = stream?.info().await?.config.subjects.clone();
+                    let mut subjects = stream
+                        .map_err(|e| Error::GetStream { source: e })?
+                        .info()
+                        .await
+                        .map_err(|e| Error::Request { source: e })?
+                        .config
+                        .subjects
+                        .clone();
 
                     subjects.extend(self.config.subjects.clone());
                     subjects.sort();
                     subjects.dedup();
                     stream_config.subjects = subjects;
 
-                    jetstream.update_stream(stream_config).await?;
+                    jetstream
+                        .update_stream(stream_config)
+                        .await
+                        .map_err(|e| Error::CreateStream { source: e })?;
                 }
                 Err(_) => {
-                    jetstream.create_stream(stream_config).await?;
+                    jetstream
+                        .create_stream(stream_config)
+                        .await
+                        .map_err(|e| Error::CreateStream { source: e })?;
                 }
             }
 

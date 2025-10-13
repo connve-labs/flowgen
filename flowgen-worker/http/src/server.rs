@@ -33,7 +33,6 @@ pub enum Error {
 }
 
 /// Shared HTTP server manager for webhook processors.
-///
 /// Allows multiple webhook processors to register routes before starting
 /// the server. Routes are stored in a thread-safe HashMap and the server
 /// can only be started once.

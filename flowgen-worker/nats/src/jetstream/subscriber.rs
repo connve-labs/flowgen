@@ -22,17 +22,29 @@ pub enum Error {
     #[error(transparent)]
     MessageConversion(#[from] crate::jetstream::message::Error),
     /// JetStream consumer operation error.
-    #[error(transparent)]
-    Consumer(#[from] async_nats::jetstream::stream::ConsumerError),
+    #[error("JetStream consumer operation failed: {source}")]
+    Consumer {
+        #[source]
+        source: async_nats::jetstream::stream::ConsumerError,
+    },
     /// JetStream consumer stream error.
-    #[error(transparent)]
-    ConsumerStream(#[from] async_nats::jetstream::consumer::StreamError),
+    #[error("JetStream consumer stream error: {source}")]
+    ConsumerStream {
+        #[source]
+        source: async_nats::jetstream::consumer::StreamError,
+    },
     /// Failed to get JetStream stream.
-    #[error(transparent)]
-    GetStream(#[from] async_nats::jetstream::context::GetStreamError),
+    #[error("Failed to get JetStream stream: {source}")]
+    GetStream {
+        #[source]
+        source: async_nats::jetstream::context::GetStreamError,
+    },
     /// Failed to get JetStream stream information.
-    #[error(transparent)]
-    StreamInfo(#[from] async_nats::jetstream::stream::InfoError),
+    #[error("Failed to get JetStream stream information: {source}")]
+    StreamInfo {
+        #[source]
+        source: async_nats::jetstream::stream::InfoError,
+    },
     /// Failed to retrieve consumer configuration information.
     #[error("Consumer configuration check failed")]
     ConsumerInfoFailed,
@@ -44,14 +56,23 @@ pub enum Error {
         expected: String,
     },
     /// Failed to subscribe to NATS subject.
-    #[error(transparent)]
-    Subscribe(#[from] async_nats::SubscribeError),
+    #[error("Failed to subscribe to NATS subject: {source}")]
+    Subscribe {
+        #[source]
+        source: async_nats::SubscribeError,
+    },
     /// Async task join error.
-    #[error(transparent)]
-    TaskJoin(#[from] tokio::task::JoinError),
+    #[error("Task join error: {source}")]
+    TaskJoin {
+        #[source]
+        source: tokio::task::JoinError,
+    },
     /// Failed to send event through broadcast channel.
-    #[error(transparent)]
-    SendMessage(#[from] tokio::sync::broadcast::error::SendError<Event>),
+    #[error("Failed to send event message: {source}")]
+    SendMessage {
+        #[source]
+        source: tokio::sync::broadcast::error::SendError<Event>,
+    },
     /// Required configuration attribute is missing.
     #[error("Missing required attribute: {}.", _0)]
     MissingRequiredAttribute(String),
@@ -79,7 +100,11 @@ impl EventHandler {
                 time::sleep(Duration::from_secs(delay_secs)).await
             }
 
-            let stream = self.consumer.messages().await?;
+            let stream = self
+                .consumer
+                .messages()
+                .await
+                .map_err(|e| Error::ConsumerStream { source: e })?;
             let mut batch = stream.take(self.config.batch_size);
 
             while let Some(message) = batch.next().await {
@@ -89,7 +114,9 @@ impl EventHandler {
                     e.current_task_id = Some(self.current_task_id);
 
                     info!("{}: {}", DEFAULT_LOG_MESSAGE, e.subject);
-                    self.tx.send(e)?;
+                    self.tx
+                        .send(e)
+                        .map_err(|e| Error::SendMessage { source: e })?;
                 }
             }
         }
@@ -128,7 +155,10 @@ impl flowgen_core::task::runner::Runner for Subscriber {
             .await?;
 
         if let Some(jetstream) = client.jetstream {
-            let stream = jetstream.get_stream(self.config.stream.clone()).await?;
+            let stream = jetstream
+                .get_stream(self.config.stream.clone())
+                .await
+                .map_err(|e| Error::GetStream { source: e })?;
 
             let consumer_config = jetstream::consumer::pull::Config {
                 durable_name: Some(self.config.durable_name.clone()),
@@ -138,7 +168,10 @@ impl flowgen_core::task::runner::Runner for Subscriber {
 
             let consumer = match stream.get_consumer(&self.config.durable_name).await {
                 Ok(mut existing_consumer) => {
-                    let consumer_info = existing_consumer.info().await?;
+                    let consumer_info = existing_consumer
+                        .info()
+                        .await
+                        .map_err(|e| Error::StreamInfo { source: e })?;
                     let current_filter = consumer_info.config.filter_subject.clone();
 
                     if current_filter != self.config.subject {
@@ -151,7 +184,10 @@ impl flowgen_core::task::runner::Runner for Subscriber {
                         existing_consumer
                     }
                 }
-                Err(_) => stream.create_consumer(consumer_config).await?,
+                Err(_) => stream
+                    .create_consumer(consumer_config)
+                    .await
+                    .map_err(|e| Error::Consumer { source: e })?,
             };
 
             Ok(EventHandler {
