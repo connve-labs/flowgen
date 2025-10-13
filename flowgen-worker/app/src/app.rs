@@ -64,7 +64,7 @@ impl App {
     /// This method discovers flow configuration files using the glob pattern specified in the app config,
     /// parses each configuration file, builds flow instances, registers HTTP routes, starts the HTTP server,
     /// and finally runs all flow tasks concurrently along with the server.
-    #[tracing::instrument(skip(self), name = "app")]
+    #[tracing::instrument(skip(self), name = "app.start")]
     pub async fn start(self) -> Result<(), Error> {
         let app_config = Arc::new(self.config);
 
@@ -177,7 +177,7 @@ impl App {
                             Ok(connected_host) => Some(std::sync::Arc::new(connected_host)
                                 as std::sync::Arc<dyn flowgen_core::host::Host>),
                             Err(e) => {
-                                warn!("{}. Continuing without host coordination.", e);
+                                warn!("Continuing without host coordination due to error: {}", e);
                                 None
                             }
                         }
@@ -190,13 +190,10 @@ impl App {
             None
         };
 
-        // Initialize flows and spawn each flow's execution.
-        // Separate flows that need to complete setup before server starts.
-        let mut blocking_flow_setups = Vec::new();
-        let mut background_flows = Vec::new();
-
+        // Build all flows from configuration files.
+        let mut flows: Vec<super::flow::Flow> = Vec::new();
         for config in flow_configs {
-            let http_server_clone = http_server.as_ref().map(Arc::clone);
+            let http_server = http_server.as_ref().map(Arc::clone);
             let host = host_client.as_ref().map(Arc::clone);
             let cache = cache
                 .as_ref()
@@ -207,110 +204,56 @@ impl App {
                 .host(host)
                 .cache(cache);
 
-            if let Some(server) = http_server_clone {
+            if let Some(server) = http_server {
                 flow_builder = flow_builder.http_server(server);
             }
 
-            // Build flow and spawn its execution
-            let flow = match flow_builder.build() {
-                Ok(flow) => flow,
+            match flow_builder.build() {
+                Ok(flow) => flows.push(flow),
                 Err(e) => {
                     error!("Flow build failed: {}", e);
                     continue;
                 }
             };
+        }
 
-            // Check if this flow should complete setup before server starts
-            let wait_for_ready = flow.should_wait_for_ready();
-
-            let span = tracing::Span::current();
-
-            if wait_for_ready {
-                // For blocking flows, run setup and then spawn tasks in background
-                let setup_handle = tokio::spawn(
-                    async move {
-                        match flow.run().await {
-                            Ok(flow) => {
-                                // Flow setup complete, return task list to be monitored in background
-                                flow.task_list
-                            }
-                            Err(e) => {
-                                error!("Flow execution failed: {}", e);
-                                None
-                            }
-                        }
-                    }
-                    .instrument(span),
-                );
-                blocking_flow_setups.push(setup_handle);
-            } else {
-                // For non-blocking flows, spawn entire flow lifecycle in background
-                let flow_handle = tokio::spawn(
-                    async move {
-                        match flow.run().await {
-                            Ok(flow) => {
-                                // Flow setup complete, monitor spawned tasks
-                                if let Some(task_list) = flow.task_list {
-                                    let results = futures_util::future::join_all(task_list).await;
-                                    for (idx, result) in results.into_iter().enumerate() {
-                                        if let Err(e) = result {
-                                            error!("Task {} panicked: {}", idx, e);
-                                        }
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                error!("Flow execution failed: {}", e);
-                            }
-                        }
-                    }
-                    .instrument(span),
-                );
-                background_flows.push(flow_handle);
+        // Initialize all flows.
+        for flow in &mut flows {
+            if let Err(e) = flow.init().await {
+                error!("Flow initialization failed for {}: {}", flow.name(), e);
             }
         }
 
-        // Wait for blocking flows to complete setup (e.g., registering HTTP routes)
-        if !blocking_flow_setups.is_empty() {
-            info!(
-                "Waiting for {} flow(s) to complete initial setup",
-                blocking_flow_setups.len()
-            );
-            let setup_results = futures_util::future::join_all(blocking_flow_setups).await;
-
-            // Spawn task monitors for blocking flows' tasks
-            for setup_result in setup_results {
-                match setup_result {
-                    Ok(Some(task_list)) => {
-                        let span = tracing::Span::current();
-                        let task_monitor = tokio::spawn(
-                            async move {
-                                let results = futures_util::future::join_all(task_list).await;
-                                for (idx, result) in results.into_iter().enumerate() {
-                                    if let Err(e) = result {
-                                        error!("Task {} panicked: {}", idx, e);
-                                    }
-                                }
-                            }
-                            .instrument(span),
-                        );
-                        background_flows.push(task_monitor);
-                    }
-                    Ok(None) => {
-                        // Flow had no tasks or setup failed
-                    }
-                    Err(e) => {
-                        error!("Flow setup task panicked: {}", e);
-                    }
+        // Run HTTP handlers and wait for them to register.
+        let mut http_handler_tasks = Vec::new();
+        for flow in &flows {
+            match flow.run_http_handlers().await {
+                Ok(handles) => http_handler_tasks.extend(handles),
+                Err(e) => {
+                    error!("Failed to run http handlers for {}: {}", flow.name(), e);
                 }
             }
         }
 
-        // Start HTTP server now that setup is complete (if enabled)
-        let server_handle = if let Some(http_server) = http_server {
+        if !http_handler_tasks.is_empty() {
+            info!(
+                "Waiting for {} HTTP handler(s) to complete setup...",
+                http_handler_tasks.len()
+            );
+            let results = futures_util::future::join_all(http_handler_tasks).await;
+            for result in results {
+                if let Err(e) = result {
+                    error!("HTTP handler setup task panicked: {}", e);
+                }
+            }
+        }
+
+        // Start the main HTTP server.
+        let mut background_handles = Vec::new();
+        if let Some(http_server) = http_server {
             let configured_port = app_config.http_server.as_ref().and_then(|http| http.port);
             let span = tracing::Span::current();
-            Some(tokio::spawn(
+            let server_handle = tokio::spawn(
                 async move {
                     // Downcast to concrete HttpServer type to access start_server method
                     if let Some(server) = http_server
@@ -325,17 +268,17 @@ impl App {
                     }
                 }
                 .instrument(span),
-            ))
-        } else {
-            None
-        };
-
-        if let Some(handle) = server_handle {
-            background_flows.push(handle);
+            );
+            background_handles.push(server_handle);
         }
 
-        // Wait for all background flows and server
-        let results = futures_util::future::join_all(background_flows).await;
+        // Start all background flow tasks.
+        for flow in flows {
+            background_handles.push(flow.start());
+        }
+
+        // Wait for all background flows and the server to complete.
+        let results = futures_util::future::join_all(background_handles).await;
         for result in results {
             if let Err(e) = result {
                 error!("Background task panicked: {}", e);
