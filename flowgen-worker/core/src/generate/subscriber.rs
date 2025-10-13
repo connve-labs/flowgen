@@ -12,7 +12,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::{sync::broadcast::Sender, time};
-use tracing::{error, info, warn};
+use tracing::{error, info, warn, Instrument};
 
 /// Default subject prefix for generated events.
 const DEFAULT_MESSAGE_SUBJECT: &str = "generate";
@@ -40,24 +40,17 @@ pub enum Error {
     #[error("Host coordination error")]
     Host(#[source] crate::host::Error),
 }
-/// Event generator that produces events at scheduled intervals.
-#[derive(Debug)]
-pub struct Subscriber {
-    /// Configuration settings for event generation.
+/// Event handler for generating scheduled events.
+struct EventHandler {
     config: Arc<super::config::Subscriber>,
-    /// Channel sender for broadcasting generated events.
     tx: Sender<Event>,
-    /// Task identifier for event tracking.
     current_task_id: usize,
-    /// Task execution context providing metadata and runtime configuration.
     task_context: Arc<crate::task::context::TaskContext>,
 }
 
-impl crate::task::runner::Runner for Subscriber {
-    type Error = Error;
-
-    #[tracing::instrument(skip(self), name = DEFAULT_MESSAGE_SUBJECT, fields(task = %self.config.name, task_id = self.current_task_id))]
-    async fn run(self) -> Result<(), Error> {
+impl EventHandler {
+    /// Generates events at scheduled intervals.
+    async fn handle(self) -> Result<(), Error> {
         let mut counter = 0;
 
         // Get cache from task context if available.
@@ -136,6 +129,45 @@ impl crate::task::runner::Runner for Subscriber {
                 Some(_) | None => {}
             }
         }
+    }
+}
+
+/// Event generator that produces events at scheduled intervals.
+#[derive(Debug)]
+pub struct Subscriber {
+    /// Configuration settings for event generation.
+    config: Arc<super::config::Subscriber>,
+    /// Channel sender for broadcasting generated events.
+    tx: Sender<Event>,
+    /// Task identifier for event tracking.
+    current_task_id: usize,
+    /// Task execution context providing metadata and runtime configuration.
+    task_context: Arc<crate::task::context::TaskContext>,
+}
+
+impl crate::task::runner::Runner for Subscriber {
+    type Error = Error;
+
+    #[tracing::instrument(skip(self), name = DEFAULT_MESSAGE_SUBJECT, fields(task = %self.config.name, task_id = self.current_task_id))]
+    async fn run(self) -> Result<(), Error> {
+        let event_handler = EventHandler {
+            config: self.config,
+            tx: self.tx,
+            current_task_id: self.current_task_id,
+            task_context: self.task_context,
+        };
+
+        // Spawn event handler task.
+        tokio::spawn(
+            async move {
+                if let Err(e) = event_handler.handle().await {
+                    error!("{}", e);
+                }
+            }
+            .instrument(tracing::Span::current()),
+        );
+
+        Ok(())
     }
 }
 
@@ -444,6 +476,9 @@ mod tests {
 
         // Run subscriber to completion
         let _ = subscriber.run().await;
+
+        // Wait a bit for the spawned task to complete
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
         // Check that cache key was created with label format
         let cache_data = mock_cache.data.lock().await;

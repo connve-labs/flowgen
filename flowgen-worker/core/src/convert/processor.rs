@@ -85,6 +85,10 @@ struct AvroSerializerOptions {
 impl EventHandler {
     /// Processes an event and converts to selected target format.
     async fn handle(&self, event: Event) -> Result<(), Error> {
+        if event.current_task_id != Some(self.current_task_id - 1) {
+            return Ok(());
+        }
+
         let data = match event.data {
             EventData::Json(mut data) => match &self.serializer {
                 Some(serializer_opts) => {
@@ -140,11 +144,12 @@ pub struct Processor {
     _task_context: Arc<crate::task::context::TaskContext>,
 }
 
-impl crate::task::runner::Runner for Processor {
-    type Error = Error;
-
-    #[tracing::instrument(skip(self), name = DEFAULT_MESSAGE_SUBJECT, fields(task = %self.config.name, task_id = self.current_task_id))]
-    async fn run(mut self) -> Result<(), Error> {
+impl Processor {
+    /// Initializes the processor by parsing and configuring the serializer.
+    ///
+    /// This method performs all setup operations that can fail, including:
+    /// - Parsing Avro schema if converting to Avro format
+    async fn init(&self) -> Result<EventHandler, Error> {
         let serializer = match self.config.target_format {
             super::config::TargetFormat::Avro => {
                 let schema_string = self
@@ -156,7 +161,7 @@ impl crate::task::runner::Runner for Processor {
 
                 let schema: serde_avro_fast::Schema = schema_string.parse()?;
 
-                // Leak the schema to get a 'static reference
+                // Leak the schema to get a 'static reference.
                 // This is intentional and safe in this context since the schema
                 // is effectively program-lifetime data.
                 let leaked_schema: &'static serde_avro_fast::Schema = Box::leak(Box::new(schema));
@@ -170,27 +175,43 @@ impl crate::task::runner::Runner for Processor {
             }
         };
 
-        let event_handler = Arc::new(EventHandler {
+        let event_handler = EventHandler {
             config: Arc::clone(&self.config),
             tx: self.tx.clone(),
             current_task_id: self.current_task_id,
             serializer,
-        });
+        };
+
+        Ok(event_handler)
+    }
+}
+
+impl crate::task::runner::Runner for Processor {
+    type Error = Error;
+
+    #[tracing::instrument(skip(self), name = DEFAULT_MESSAGE_SUBJECT, fields(task = %self.config.name, task_id = self.current_task_id))]
+    async fn run(mut self) -> Result<(), Error> {
+        // Initialize runner task.
+        let event_handler = match self.init().await {
+            Ok(handler) => Arc::new(handler),
+            Err(e) => {
+                error!("{}", e);
+                return Ok(());
+            }
+        };
 
         loop {
             match self.rx.recv().await {
                 Ok(event) => {
-                    if event.current_task_id == Some(self.current_task_id - 1) {
-                        let handler = Arc::clone(&event_handler);
-                        tokio::spawn(
-                            async move {
-                                if let Err(err) = handler.handle(event).await {
-                                    error!("{}", err);
-                                }
+                    let event_handler = Arc::clone(&event_handler);
+                    tokio::spawn(
+                        async move {
+                            if let Err(err) = event_handler.handle(event).await {
+                                error!("{}", err);
                             }
-                            .instrument(tracing::Span::current()),
-                        );
-                    }
+                        }
+                        .instrument(tracing::Span::current()),
+                    );
                 }
                 Err(_) => return Ok(()),
             }

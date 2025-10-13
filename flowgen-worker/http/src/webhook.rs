@@ -204,14 +204,16 @@ pub struct Processor {
     _task_context: Arc<flowgen_core::task::context::TaskContext>,
 }
 
-impl flowgen_core::task::runner::Runner for Processor {
-    type Error = Error;
-
-    #[tracing::instrument(skip(self), name = DEFAULT_MESSAGE_SUBJECT, fields(task = %self.config.name, task_id = self.current_task_id))]
-    async fn run(self) -> Result<(), Error> {
+impl Processor {
+    /// Initializes the processor by loading credentials and registering the webhook route.
+    ///
+    /// This method performs all setup operations that can fail, including:
+    /// - Loading authentication credentials from filesystem
+    /// - Registering the webhook route with the HTTP server
+    async fn init(self) -> Result<(), Error> {
         let config = Arc::clone(&self.config);
 
-        // Load credentials at task creation time
+        // Load credentials at task creation time.
         let credentials = match &config.credentials {
             Some(path) => {
                 let content = fs::read_to_string(path)?;
@@ -245,6 +247,20 @@ impl flowgen_core::task::runner::Runner for Processor {
         self.http_server
             .register_route(config.endpoint.clone(), method_router)
             .await;
+
+        Ok(())
+    }
+}
+
+impl flowgen_core::task::runner::Runner for Processor {
+    type Error = Error;
+
+    #[tracing::instrument(skip(self), name = DEFAULT_MESSAGE_SUBJECT, fields(task = %self.config.name, task_id = self.current_task_id))]
+    async fn run(self) -> Result<(), Error> {
+        // Initialize runner task.
+        if let Err(e) = self.init().await {
+            error!("{}", e);
+        }
 
         Ok(())
     }

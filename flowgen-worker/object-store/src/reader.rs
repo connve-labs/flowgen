@@ -73,7 +73,11 @@ struct EventHandler {
 
 impl EventHandler {
     /// Processes an event and writes it to the configured object store.
-    async fn handle(&self, _: Event) -> Result<(), Error> {
+    async fn handle(&self, event: Event) -> Result<(), Error> {
+        if event.current_task_id != Some(self.current_task_id - 1) {
+            return Ok(());
+        }
+
         // Get cache from task context if available.
         let cache = self.task_context.cache.as_ref();
         let mut client_guard = self.client.lock().await;
@@ -190,12 +194,13 @@ pub struct Reader {
     task_context: Arc<flowgen_core::task::context::TaskContext>,
 }
 
-impl flowgen_core::task::runner::Runner for Reader {
-    type Error = Error;
-
-    #[tracing::instrument(skip(self), name = DEFAULT_MESSAGE_SUBJECT, fields(task = %self.config.name, task_id = self.current_task_id))]
-    async fn run(mut self) -> Result<(), Self::Error> {
-        // Build object store client with conditional configuration
+impl Reader {
+    /// Initializes the reader by establishing object store client connection.
+    ///
+    /// This method performs all setup operations that can fail, including:
+    /// - Building and connecting the object store client with credentials
+    async fn init(&self) -> Result<EventHandler, Error> {
+        // Build object store client with conditional configuration.
         let mut client_builder = super::client::ClientBuilder::new().path(self.config.path.clone());
 
         if let Some(options) = &self.config.client_options {
@@ -207,29 +212,45 @@ impl flowgen_core::task::runner::Runner for Reader {
 
         let client = Arc::new(Mutex::new(client_builder.build()?.connect().await?));
 
-        let event_handler = Arc::new(EventHandler {
+        let event_handler = EventHandler {
             client,
             config: Arc::clone(&self.config),
             tx: self.tx.clone(),
             current_task_id: self.current_task_id,
             task_context: Arc::clone(&self.task_context),
-        });
+        };
+
+        Ok(event_handler)
+    }
+}
+
+impl flowgen_core::task::runner::Runner for Reader {
+    type Error = Error;
+
+    #[tracing::instrument(skip(self), name = DEFAULT_MESSAGE_SUBJECT, fields(task = %self.config.name, task_id = self.current_task_id))]
+    async fn run(mut self) -> Result<(), Self::Error> {
+        // Initialize runner task.
+        let event_handler = match self.init().await {
+            Ok(handler) => Arc::new(handler),
+            Err(e) => {
+                error!("{}", e);
+                return Ok(());
+            }
+        };
 
         // Process incoming events, filtering by task ID.
         loop {
             match self.rx.recv().await {
                 Ok(event) => {
-                    if event.current_task_id == Some(self.current_task_id - 1) {
-                        let handler = Arc::clone(&event_handler);
-                        tokio::spawn(
-                            async move {
-                                if let Err(err) = handler.handle(event).await {
-                                    error!("{}", err);
-                                }
+                    let event_handler = Arc::clone(&event_handler);
+                    tokio::spawn(
+                        async move {
+                            if let Err(err) = event_handler.handle(event).await {
+                                error!("{}", err);
                             }
-                            .instrument(tracing::Span::current()),
-                        );
-                    }
+                        }
+                        .instrument(tracing::Span::current()),
+                    );
                 }
                 Err(_) => return Ok(()),
             }

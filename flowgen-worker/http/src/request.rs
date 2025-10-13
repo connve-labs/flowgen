@@ -80,6 +80,10 @@ struct EventHandler {
 impl EventHandler {
     /// Processes an event by making an HTTP request.
     async fn handle(&self, event: Event) -> Result<(), Error> {
+        if event.current_task_id != Some(self.current_task_id - 1) {
+            return Ok(());
+        }
+
         let config = self.config.render(&event.data)?;
 
         let mut client = match config.method {
@@ -172,35 +176,49 @@ pub struct Processor {
     _task_context: Arc<flowgen_core::task::context::TaskContext>,
 }
 
+impl Processor {
+    /// Initializes the processor by building the HTTP client.
+    async fn init(&self) -> Result<EventHandler, Error> {
+        let client = reqwest::ClientBuilder::new().https_only(true).build()?;
+        let client = Arc::new(client);
+
+        let event_handler = EventHandler {
+            config: Arc::clone(&self.config),
+            current_task_id: self.current_task_id,
+            tx: self.tx.clone(),
+            client,
+        };
+
+        Ok(event_handler)
+    }
+}
+
 impl flowgen_core::task::runner::Runner for Processor {
     type Error = Error;
 
     #[tracing::instrument(skip(self), name = DEFAULT_MESSAGE_SUBJECT, fields(task = %self.config.name, task_id = self.current_task_id))]
     async fn run(mut self) -> Result<(), Error> {
-        let client = reqwest::ClientBuilder::new().https_only(true).build()?;
-        let client = Arc::new(client);
-
-        let event_handler = Arc::new(EventHandler {
-            config: Arc::clone(&self.config),
-            current_task_id: self.current_task_id,
-            tx: self.tx.clone(),
-            client,
-        });
+        // Initialize runner task.
+        let event_handler = match self.init().await {
+            Ok(handler) => Arc::new(handler),
+            Err(e) => {
+                error!("{}", e);
+                return Ok(());
+            }
+        };
 
         loop {
             match self.rx.recv().await {
                 Ok(event) => {
-                    if event.current_task_id == Some(self.current_task_id - 1) {
-                        let handler = Arc::clone(&event_handler);
-                        tokio::spawn(
-                            async move {
-                                if let Err(err) = handler.handle(event).await {
-                                    error!("{}", err);
-                                }
+                    let event_handler = Arc::clone(&event_handler);
+                    tokio::spawn(
+                        async move {
+                            if let Err(err) = event_handler.handle(event).await {
+                                error!("{}", err);
                             }
-                            .instrument(tracing::Span::current()),
-                        );
-                    }
+                        }
+                        .instrument(tracing::Span::current()),
+                    );
                 }
                 Err(_) => return Ok(()),
             }

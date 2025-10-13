@@ -43,10 +43,15 @@ pub enum Error {
 
 struct EventHandler {
     jetstream: Arc<Mutex<async_nats::jetstream::Context>>,
+    current_task_id: usize,
 }
 
 impl EventHandler {
     async fn handle(&self, event: Event) -> Result<(), Error> {
+        if event.current_task_id != Some(self.current_task_id - 1) {
+            return Ok(());
+        }
+
         let e = event.to_publish()?;
 
         info!("{}: {}", DEFAULT_LOG_MESSAGE, event.subject);
@@ -73,11 +78,13 @@ pub struct Publisher {
     _task_context: Arc<flowgen_core::task::context::TaskContext>,
 }
 
-impl flowgen_core::task::runner::Runner for Publisher {
-    type Error = Error;
-
-    #[tracing::instrument(skip(self), name = DEFAULT_MESSAGE_SUBJECT, fields(task = %self.config.name, task_id = self.current_task_id))]
-    async fn run(mut self) -> Result<(), Self::Error> {
+impl Publisher {
+    /// Initializes the publisher by establishing connection and creating/updating stream.
+    ///
+    /// This method performs all setup operations that can fail, including:
+    /// - Connecting to NATS with credentials
+    /// - Creating or updating JetStream stream
+    async fn init(&self) -> Result<EventHandler, Error> {
         let client = crate::client::ClientBuilder::new()
             .credentials_path(self.config.credentials.clone())
             .build()?
@@ -120,29 +127,48 @@ impl flowgen_core::task::runner::Runner for Publisher {
             }
 
             let jetstream = Arc::new(Mutex::new(jetstream));
+            let event_handler = EventHandler {
+                jetstream,
+                current_task_id: self.current_task_id,
+            };
 
-            let event_handler = Arc::new(EventHandler { jetstream });
+            Ok(event_handler)
+        } else {
+            Err(Error::MissingClient())
+        }
+    }
+}
 
-            loop {
-                match self.rx.recv().await {
-                    Ok(event) => {
-                        if event.current_task_id == Some(self.current_task_id - 1) {
-                            let handler = Arc::clone(&event_handler);
-                            tokio::spawn(
-                                async move {
-                                    if let Err(err) = handler.handle(event).await {
-                                        error!("{}", err);
-                                    }
-                                }
-                                .instrument(tracing::Span::current()),
-                            );
+impl flowgen_core::task::runner::Runner for Publisher {
+    type Error = Error;
+
+    #[tracing::instrument(skip(self), name = DEFAULT_MESSAGE_SUBJECT, fields(task = %self.config.name, task_id = self.current_task_id))]
+    async fn run(mut self) -> Result<(), Self::Error> {
+        // Initialize runner task.
+        let event_handler = match self.init().await {
+            Ok(handler) => Arc::new(handler),
+            Err(e) => {
+                error!("{}", e);
+                return Ok(());
+            }
+        };
+
+        loop {
+            match self.rx.recv().await {
+                Ok(event) => {
+                    let event_handler = Arc::clone(&event_handler);
+                    tokio::spawn(
+                        async move {
+                            if let Err(err) = event_handler.handle(event).await {
+                                error!("{}", err);
+                            }
                         }
-                    }
-                    Err(_) => return Ok(()),
+                        .instrument(tracing::Span::current()),
+                    );
                 }
+                Err(_) => return Ok(()),
             }
         }
-        Ok(())
     }
 }
 

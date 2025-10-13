@@ -10,7 +10,7 @@ use serde_avro_fast::{ser, Schema};
 use serde_json::{Map, Value};
 use std::{path::Path, sync::Arc};
 use tokio::sync::{broadcast::Receiver, Mutex};
-use tracing::info;
+use tracing::{error, info, Instrument};
 
 const DEFAULT_MESSAGE_SUBJECT: &str = "salesforce_pubsub_publisher";
 
@@ -29,6 +29,9 @@ pub enum Error {
     /// Apache Avro serialization error.
     #[error(transparent)]
     SerdeAvro(#[from] serde_avro_fast::ser::SerError),
+    /// Avro schema parsing error.
+    #[error(transparent)]
+    SerdeSchema(#[from] serde_avro_fast::schema::SchemaError),
     /// Template rendering error for dynamic configuration.
     #[error(transparent)]
     Render(#[from] flowgen_core::config::Error),
@@ -55,6 +58,72 @@ pub enum Error {
     Host(#[from] flowgen_core::host::Error),
 }
 
+/// Event handler for processing and publishing events to Salesforce Pub/Sub.
+struct EventHandler {
+    /// Publisher configuration.
+    config: Arc<super::config::Publisher>,
+    /// Pub/Sub connection context.
+    pubsub: Arc<Mutex<super::context::Context>>,
+    /// Topic name for publishing.
+    topic: String,
+    /// Base subject for event generation.
+    base_subject: String,
+    /// Schema ID for event serialization.
+    schema_id: String,
+    /// Avro serializer configuration.
+    serializer_config: Mutex<ser::SerializerConfig<'static>>,
+    /// Current task identifier.
+    current_task_id: usize,
+}
+
+impl EventHandler {
+    /// Processes an event by publishing it to Salesforce Pub/Sub.
+    async fn handle(&self, event: Event) -> Result<(), Error> {
+        let config = self.config.render(&event.data)?;
+        let payload = config.payload.to_string()?.to_value()?;
+
+        let mut publish_payload: Map<String, Value> = Map::new();
+        for (k, v) in payload.as_object().ok_or_else(Error::EmptyObject)? {
+            publish_payload.insert(k.to_owned(), v.to_owned());
+        }
+        let now = Utc::now().timestamp_millis();
+        publish_payload.insert("CreatedDate".to_string(), Value::Number(now.into()));
+
+        let mut serializer_config = self.serializer_config.lock().await;
+        let serialized_payload: Vec<u8> =
+            serde_avro_fast::to_datum_vec(&publish_payload, &mut serializer_config)?;
+
+        let mut events = Vec::new();
+        let pe = ProducerEvent {
+            schema_id: self.schema_id.clone(),
+            payload: serialized_payload,
+            ..Default::default()
+        };
+        events.push(pe);
+
+        let _ = self
+            .pubsub
+            .lock()
+            .await
+            .publish(PublishRequest {
+                topic_name: self.topic.clone(),
+                events,
+                ..Default::default()
+            })
+            .await?;
+
+        // Generate event subject.
+        let subject = generate_subject(
+            Some(&self.config.name),
+            &self.base_subject,
+            SubjectSuffix::Timestamp,
+        );
+
+        info!("Event processed: {}", subject);
+        Ok(())
+    }
+}
+
 /// Salesforce Pub/Sub publisher that receives events and publishes them to configured topics.
 #[derive(Debug)]
 pub struct Publisher {
@@ -68,11 +137,14 @@ pub struct Publisher {
     _task_context: Arc<flowgen_core::task::context::TaskContext>,
 }
 
-impl flowgen_core::task::runner::Runner for Publisher {
-    type Error = Error;
-
-    #[tracing::instrument(skip(self), name = DEFAULT_MESSAGE_SUBJECT, fields(task = %self.config.name, task_id = self.current_task_id))]
-    async fn run(mut self) -> Result<(), Self::Error> {
+impl Publisher {
+    /// Initializes the publisher by establishing connection and retrieving schema.
+    ///
+    /// This method performs all setup operations that can fail, including:
+    /// - Connecting to Salesforce Pub/Sub service
+    /// - Authenticating with credentials
+    /// - Retrieving topic information and schema
+    async fn init(&self) -> Result<EventHandler, Error> {
         let config = self.config.as_ref();
         let a = Path::new(&config.credentials);
 
@@ -82,24 +154,19 @@ impl flowgen_core::task::runner::Runner for Publisher {
                 super::config::DEFAULT_PUBSUB_URL,
                 super::config::DEFAULT_PUBSUB_PORT
             ))
-            .build()
-            .map_err(Error::Service)?
+            .build()?
             .connect()
-            .await
-            .map_err(Error::Service)?;
+            .await?;
 
         let sfdc_client = crate::client::Builder::new()
             .credentials_path(a.to_path_buf())
-            .build()
-            .map_err(Error::Auth)?
+            .build()?
             .connect()
-            .await
-            .map_err(Error::Auth)?;
+            .await?;
 
         let pubsub = super::context::ContextBuilder::new(service)
             .with_client(sfdc_client)
-            .build()
-            .map_err(Error::PubSub)?;
+            .build()?;
 
         let pubsub = Arc::new(Mutex::new(pubsub));
 
@@ -109,8 +176,7 @@ impl flowgen_core::task::runner::Runner for Publisher {
             .get_topic(TopicRequest {
                 topic_name: self.config.topic.clone(),
             })
-            .await
-            .map_err(Error::PubSub)?
+            .await?
             .into_inner();
 
         let schema_info = pubsub
@@ -119,70 +185,64 @@ impl flowgen_core::task::runner::Runner for Publisher {
             .get_schema(SchemaRequest {
                 schema_id: topic_info.schema_id,
             })
-            .await
-            .map_err(Error::PubSub)?
+            .await?
             .into_inner();
 
-        let pubsub = pubsub.clone();
+        let schema: Schema = schema_info.schema_json.parse()?;
 
-        let topic = &self.config.topic;
-        let schema_id = &schema_info.schema_id;
+        // Leak the schema to get a 'static reference.
+        // This is intentional and safe in this context since the schema
+        // is effectively program-lifetime data.
+        let leaked_schema: &'static Schema = Box::leak(Box::new(schema));
+        let serializer_config = ser::SerializerConfig::new(leaked_schema);
 
-        let schema: Schema = schema_info
-            .schema_json
-            .parse()
-            .map_err(|_| Error::SchemaParse())?;
+        // Generate base subject.
+        let topic = topic_info.topic_name.replace('/', ".").to_lowercase();
+        let base_subject = format!("{}.{}", DEFAULT_MESSAGE_SUBJECT, &topic[1..]);
 
-        let serializer_config = &mut ser::SerializerConfig::new(&schema);
+        let topic_name = self.config.topic.clone();
+
+        let event_handler = EventHandler {
+            config: Arc::clone(&self.config),
+            pubsub,
+            topic: topic_name,
+            base_subject,
+            schema_id: schema_info.schema_id,
+            serializer_config: Mutex::new(serializer_config),
+            current_task_id: self.current_task_id,
+        };
+
+        Ok(event_handler)
+    }
+}
+
+impl flowgen_core::task::runner::Runner for Publisher {
+    type Error = Error;
+
+    #[tracing::instrument(skip(self), name = DEFAULT_MESSAGE_SUBJECT, fields(task = %self.config.name, task_id = self.current_task_id))]
+    async fn run(mut self) -> Result<(), Self::Error> {
+        // Initialize runner task.
+        let event_handler = match self.init().await {
+            Ok(handler) => Arc::new(handler),
+            Err(e) => {
+                error!("{}", e);
+                return Ok(());
+            }
+        };
 
         loop {
             match self.rx.recv().await {
                 Ok(event) => {
-                    if event.current_task_id == Some(self.current_task_id - 1) {
-                        let config = config.render(&event.data)?;
-                        let payload = config.payload.to_string()?.to_value()?;
-
-                        let mut publish_payload: Map<String, Value> = Map::new();
-                        for (k, v) in payload.as_object().ok_or_else(Error::EmptyObject)? {
-                            publish_payload.insert(k.to_owned(), v.to_owned());
-                        }
-                        let now = Utc::now().timestamp_millis();
-                        publish_payload
-                            .insert("CreatedDate".to_string(), Value::Number(now.into()));
-
-                        let serialized_payload: Vec<u8> =
-                            serde_avro_fast::to_datum_vec(&publish_payload, serializer_config)
-                                .map_err(Error::SerdeAvro)?;
-
-                        let mut events = Vec::new();
-                        let pe = ProducerEvent {
-                            schema_id: schema_id.to_string(),
-                            payload: serialized_payload,
-                            ..Default::default()
-                        };
-                        events.push(pe);
-
-                        let _ = pubsub
-                            .lock()
-                            .await
-                            .publish(PublishRequest {
-                                topic_name: topic.to_string(),
-                                events,
-                                ..Default::default()
-                            })
-                            .await
-                            .map_err(Error::PubSub)?;
-
-                        // Generate event subject/
-                        let topic = topic_info.topic_name.replace('/', ".").to_lowercase();
-                        let base_subject = format!("{}.{}", DEFAULT_MESSAGE_SUBJECT, &topic[1..]);
-                        let subject = generate_subject(
-                            Some(&self.config.name),
-                            &base_subject,
-                            SubjectSuffix::Timestamp,
+                    if event.current_task_id == Some(event_handler.current_task_id - 1) {
+                        let event_handler = Arc::clone(&event_handler);
+                        tokio::spawn(
+                            async move {
+                                if let Err(err) = event_handler.handle(event).await {
+                                    error!("{}", err);
+                                }
+                            }
+                            .instrument(tracing::Span::current()),
                         );
-
-                        info!("Event processed: {}", subject);
                     }
                 }
                 Err(_) => return Ok(()),

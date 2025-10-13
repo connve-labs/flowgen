@@ -7,7 +7,7 @@ use flowgen_core::{
 use std::{sync::Arc, time::Duration};
 use tokio::{sync::broadcast::Sender, time};
 use tokio_stream::StreamExt;
-use tracing::info;
+use tracing::{error, info, Instrument};
 
 /// Default subject prefix for NATS subscriber.
 const DEFAULT_MESSAGE_SUBJECT: &str = "nats_jetstream_subscriber";
@@ -63,6 +63,39 @@ pub enum Error {
     Host(#[from] flowgen_core::host::Error),
 }
 
+/// Event handler for processing NATS messages.
+struct EventHandler {
+    consumer: jetstream::consumer::Consumer<jetstream::consumer::pull::Config>,
+    tx: Sender<Event>,
+    current_task_id: usize,
+    config: Arc<super::config::Subscriber>,
+}
+
+impl EventHandler {
+    /// Processes messages from the NATS JetStream consumer.
+    async fn handle(self) -> Result<(), Error> {
+        loop {
+            if let Some(delay_secs) = self.config.delay_secs {
+                time::sleep(Duration::from_secs(delay_secs)).await
+            }
+
+            let stream = self.consumer.messages().await?;
+            let mut batch = stream.take(self.config.batch_size);
+
+            while let Some(message) = batch.next().await {
+                if let Ok(message) = message {
+                    let mut e = message.to_event()?;
+                    message.ack().await.ok();
+                    e.current_task_id = Some(self.current_task_id);
+
+                    info!("{}: {}", DEFAULT_LOG_MESSAGE, e.subject);
+                    self.tx.send(e)?;
+                }
+            }
+        }
+    }
+}
+
 /// NATS JetStream subscriber that consumes messages and converts them to flowgen events.
 #[derive(Debug)]
 pub struct Subscriber {
@@ -76,11 +109,14 @@ pub struct Subscriber {
     _task_context: Arc<flowgen_core::task::context::TaskContext>,
 }
 
-impl flowgen_core::task::runner::Runner for Subscriber {
-    type Error = Error;
-
-    #[tracing::instrument(skip(self), name = DEFAULT_MESSAGE_SUBJECT, fields(task = %self.config.name, task_id = self.current_task_id))]
-    async fn run(self) -> Result<(), Error> {
+impl Subscriber {
+    /// Initializes the subscriber by establishing connection and creating consumer.
+    ///
+    /// This method performs all setup operations that can fail, including:
+    /// - Connecting to NATS with credentials
+    /// - Getting or creating JetStream stream and consumer
+    /// - Validating consumer configuration
+    async fn init(self) -> Result<EventHandler, Error> {
         let client = crate::client::ClientBuilder::new()
             .credentials_path(self.config.credentials.clone())
             .build()?
@@ -114,26 +150,44 @@ impl flowgen_core::task::runner::Runner for Subscriber {
                 Err(_) => stream.create_consumer(consumer_config).await?,
             };
 
-            loop {
-                if let Some(delay_secs) = self.config.delay_secs {
-                    time::sleep(Duration::from_secs(delay_secs)).await
-                }
+            Ok(EventHandler {
+                consumer,
+                tx: self.tx,
+                current_task_id: self.current_task_id,
+                config: self.config,
+            })
+        } else {
+            Err(Error::Other(
+                "JetStream context not available".to_string().into(),
+            ))
+        }
+    }
+}
 
-                let stream = consumer.messages().await?;
-                let mut batch = stream.take(self.config.batch_size);
+impl flowgen_core::task::runner::Runner for Subscriber {
+    type Error = Error;
 
-                while let Some(message) = batch.next().await {
-                    if let Ok(message) = message {
-                        let mut e = message.to_event()?;
-                        message.ack().await.ok();
-                        e.current_task_id = Some(self.current_task_id);
+    #[tracing::instrument(skip(self), name = DEFAULT_MESSAGE_SUBJECT, fields(task = %self.config.name, task_id = self.current_task_id))]
+    async fn run(self) -> Result<(), Error> {
+        // Initialize runner task.
+        let event_handler = match self.init().await {
+            Ok(handler) => handler,
+            Err(e) => {
+                error!("{}", e);
+                return Ok(());
+            }
+        };
 
-                        info!("{}: {}", DEFAULT_LOG_MESSAGE, e.subject);
-                        self.tx.send(e)?;
-                    }
+        // Spawn event handler task.
+        tokio::spawn(
+            async move {
+                if let Err(e) = event_handler.handle().await {
+                    error!("{}", e);
                 }
             }
-        }
+            .instrument(tracing::Span::current()),
+        );
+
         Ok(())
     }
 }
