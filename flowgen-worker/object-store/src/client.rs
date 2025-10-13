@@ -4,12 +4,22 @@ use url::Url;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    #[error(transparent)]
-    ParseUrl(#[from] url::ParseError),
-    #[error(transparent)]
-    ObjectStore(#[from] object_store::Error),
-    #[error("Missing required attribute")]
+    /// Invalid URL format for object store path.
+    #[error("Invalid object store URL format: {source}")]
+    ParseUrl {
+        #[source]
+        source: url::ParseError,
+    },
+    /// Object store operation error.
+    #[error("Object store operation failed: {source}")]
+    ObjectStore {
+        #[source]
+        source: object_store::Error,
+    },
+    /// Missing required attribute.
+    #[error("Missing required attribute: {0}")]
     MissingRequiredAttribute(String),
+    /// No path provided.
     #[error("No path provided")]
     EmptyPath(),
 }
@@ -42,7 +52,7 @@ impl flowgen_core::client::Client for Client {
     async fn connect(mut self) -> Result<Client, Error> {
         // Parse URL and prepare connection options.
         let path = self.path.to_str().ok_or_else(Error::EmptyPath)?;
-        let url = Url::parse(path)?;
+        let url = Url::parse(path).map_err(|e| Error::ParseUrl { source: e })?;
         let mut parse_opts = match &self.options {
             Some(options) => options.clone(),
             None => HashMap::new(),
@@ -57,7 +67,8 @@ impl flowgen_core::client::Client for Client {
         }
 
         // Initialize object store from URL and options.
-        let (object_store, path) = parse_url_opts(&url, parse_opts)?;
+        let (object_store, path) =
+            parse_url_opts(&url, parse_opts).map_err(|e| Error::ObjectStore { source: e })?;
         let context = Context { object_store, path };
         self.context = Some(context);
         Ok(self)

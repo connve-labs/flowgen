@@ -26,31 +26,61 @@ const DEFAULT_HAS_HEADER: bool = true;
 #[non_exhaustive]
 pub enum Error {
     /// Input/output operation failed.
-    #[error(transparent)]
-    IO(#[from] std::io::Error),
-    #[error(transparent)]
-    Arrow(#[from] arrow::error::ArrowError),
-    #[error(transparent)]
-    Avro(#[from] apache_avro::Error),
-    #[error(transparent)]
-    SerdeJson(#[from] serde_json::Error),
-    #[error(transparent)]
-    ObjectStore(#[from] object_store::Error),
+    #[error("IO operation failed: {source}")]
+    IO {
+        #[source]
+        source: std::io::Error,
+    },
+    /// Apache Arrow error.
+    #[error("Arrow operation failed: {source}")]
+    Arrow {
+        #[source]
+        source: arrow::error::ArrowError,
+    },
+    /// Apache Avro error.
+    #[error("Avro operation failed: {source}")]
+    Avro {
+        #[source]
+        source: apache_avro::Error,
+    },
+    /// JSON serialization/deserialization error.
+    #[error("JSON serialization/deserialization failed: {source}")]
+    SerdeJson {
+        #[source]
+        source: serde_json::Error,
+    },
+    /// Object store operation error.
+    #[error("Object store operation failed: {source}")]
+    ObjectStore {
+        #[source]
+        source: object_store::Error,
+    },
+    /// Object store client error.
     #[error(transparent)]
     ObjectStoreClient(#[from] super::client::Error),
+    /// Event building or processing error.
     #[error(transparent)]
     Event(#[from] flowgen_core::event::Error),
-    #[error(transparent)]
-    SendMessage(#[from] tokio::sync::broadcast::error::SendError<Event>),
+    /// Failed to send event message.
+    #[error("Failed to send event message: {source}")]
+    SendMessage {
+        #[source]
+        source: tokio::sync::broadcast::error::SendError<Event>,
+    },
+    /// Configuration template rendering error.
     #[error(transparent)]
     ConfigRender(#[from] flowgen_core::config::Error),
+    /// Missing required attribute.
     #[error("Missing required attribute: {}", _0)]
     MissingRequiredAttribute(String),
+    /// Could not initialize object store context.
     #[error("Could not initialize object store context")]
     NoObjectStoreContext(),
+    /// Could not retrieve file extension.
     #[error("Could not retrieve file extension")]
     NoFileExtension(),
-    #[error("Cache errors")]
+    /// Cache error.
+    #[error("Cache error")]
     Cache(),
     /// Host coordination error.
     #[error(transparent)]
@@ -86,7 +116,11 @@ impl EventHandler {
             .as_mut()
             .ok_or_else(Error::NoObjectStoreContext)?;
 
-        let result = context.object_store.get(&context.path).await?;
+        let result = context
+            .object_store
+            .get(&context.path)
+            .await
+            .map_err(|e| Error::ObjectStore { source: e })?;
 
         let extension = result
             .meta
@@ -122,7 +156,7 @@ impl EventHandler {
                 // Collect stream into bytes.
                 let mut buffer = BytesMut::new();
                 while let Some(chunk) = stream.next().await {
-                    let chunk = chunk?;
+                    let chunk = chunk.map_err(|e| Error::ObjectStore { source: e })?;
                     buffer.extend_from_slice(&chunk);
                 }
                 let bytes = buffer.freeze();
@@ -166,12 +200,18 @@ impl EventHandler {
                 .build()?;
 
             info!("{}: {}", DEFAULT_LOG_MESSAGE, e.subject);
-            self.tx.send(e)?;
+            self.tx
+                .send(e)
+                .map_err(|e| Error::SendMessage { source: e })?;
         }
 
         // Delete file from object store if configured.
         if self.config.delete_after_read.unwrap_or(false) {
-            context.object_store.delete(&context.path).await?;
+            context
+                .object_store
+                .delete(&context.path)
+                .await
+                .map_err(|e| Error::ObjectStore { source: e })?;
             info!("Successfully deleted file: {}", context.path.as_ref());
         }
 

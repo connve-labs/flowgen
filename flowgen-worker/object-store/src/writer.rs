@@ -16,22 +16,45 @@ const DEFAULT_MESSAGE_SUBJECT: &str = "object_store_writer";
 #[non_exhaustive]
 pub enum Error {
     /// Input/output operation failed.
-    #[error(transparent)]
-    IO(#[from] std::io::Error),
-    #[error(transparent)]
-    Arrow(#[from] arrow::error::ArrowError),
-    #[error(transparent)]
-    Avro(#[from] apache_avro::Error),
-    #[error(transparent)]
-    SerdeJson(#[from] serde_json::Error),
-    #[error(transparent)]
-    ObjectStore(#[from] object_store::Error),
+    #[error("IO operation failed: {source}")]
+    IO {
+        #[source]
+        source: std::io::Error,
+    },
+    /// Apache Arrow error.
+    #[error("Arrow operation failed: {source}")]
+    Arrow {
+        #[source]
+        source: arrow::error::ArrowError,
+    },
+    /// Apache Avro error.
+    #[error("Avro operation failed: {source}")]
+    Avro {
+        #[source]
+        source: apache_avro::Error,
+    },
+    /// JSON serialization/deserialization error.
+    #[error("JSON serialization/deserialization failed: {source}")]
+    SerdeJson {
+        #[source]
+        source: serde_json::Error,
+    },
+    /// Object store operation error.
+    #[error("Object store operation failed: {source}")]
+    ObjectStore {
+        #[source]
+        source: object_store::Error,
+    },
+    /// Object store client error.
     #[error(transparent)]
     ObjectStoreClient(#[from] super::client::Error),
+    /// Event building or processing error.
     #[error(transparent)]
     Event(#[from] flowgen_core::event::Error),
-    #[error("Missing required attribute: {}.", _0)]
+    /// Missing required attribute.
+    #[error("Missing required attribute: {0}")]
     MissingRequiredAttribute(String),
+    /// Could not initialize object store context.
     #[error("Could not initialize object store context")]
     NoObjectStoreContext(),
     /// Host coordination error.
@@ -99,7 +122,11 @@ impl EventHandler {
 
         // Upload processed data to object store.
         let payload = PutPayload::from_bytes(Bytes::from(writer));
-        let put_result = context.object_store.put(&object_path, payload).await?;
+        let put_result = context
+            .object_store
+            .put(&object_path, payload)
+            .await
+            .map_err(|e| Error::ObjectStore { source: e })?;
 
         // Generate event subject.
         let subject = generate_subject(
