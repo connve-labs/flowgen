@@ -7,7 +7,7 @@
                     "name": "account_run_sample_query",
                     "label": "account_run_sample_query",
                     "interval": 5,
-                    "count": 2
+                    "count": 5
                 }
             },
             {
@@ -16,7 +16,7 @@
                     "label": "account_salesforce_query_job",
                     "credentials": "/etc/sfdc/credentials.json",
                     "operation": "query",
-                    "query": "SELECT Id, Name, CreatedDate, LastModifiedDate FROM Account WHERE SystemModstamp = LAST_N_DAYS:100",
+                    "query": "SELECT Id, Name, CreatedDate, LastModifiedDate FROM Account WHERE SystemModstamp = LAST_N_DAYS:200",
                     "content_type": "CSV",
                     "column_delimiter": "COMMA",
                     "line_ending": "CRLF"
