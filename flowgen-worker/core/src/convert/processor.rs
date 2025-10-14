@@ -94,7 +94,7 @@ struct AvroSerializerOptions {
 impl EventHandler {
     /// Processes an event and converts to selected target format.
     async fn handle(&self, event: Event) -> Result<(), Error> {
-        if event.current_task_id != Some(self.current_task_id - 1) {
+        if event.current_task_id != self.current_task_id.checked_sub(1) {
             return Ok(());
         }
 

@@ -243,7 +243,7 @@ impl flowgen_core::task::runner::Runner for Publisher {
         loop {
             match self.rx.recv().await {
                 Ok(event) => {
-                    if event.current_task_id == Some(event_handler.current_task_id - 1) {
+                    if event.current_task_id == event_handler.current_task_id.checked_sub(1) {
                         let event_handler = Arc::clone(&event_handler);
                         tokio::spawn(
                             async move {

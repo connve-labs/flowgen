@@ -64,8 +64,8 @@ impl EventHandler {
 
         // Generate a cache_key based on flow name and task name.
         let cache_key = format!(
-            "{task_context}.{DEFAULT_MESSAGE_SUBJECT}.{task_name}.last_run",
-            task_context = self.task_context.flow.name,
+            "{flow_name}.{DEFAULT_MESSAGE_SUBJECT}.{task_name}.last_run",
+            flow_name = self.task_context.flow.name,
             task_name = self.config.name
         );
 
@@ -73,7 +73,7 @@ impl EventHandler {
             // Calculate when the next event should be generated.
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .map_err(|e| Error::SystemTime { source: e })?
                 .as_secs();
 
             let next_run_time = if let Some(cache) = cache {

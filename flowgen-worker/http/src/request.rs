@@ -95,7 +95,7 @@ pub struct EventHandler {
 impl EventHandler {
     /// Processes an event by making an HTTP request.
     async fn handle(&self, event: Event) -> Result<(), Error> {
-        if event.current_task_id != Some(self.current_task_id - 1) {
+        if event.current_task_id != self.current_task_id.checked_sub(1) {
             return Ok(());
         }
 
