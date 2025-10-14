@@ -10,7 +10,11 @@ flows:
 http_server:
   enabled: true
   port: 3000
+  # Optional path prefix for all routes (e.g., "/api/flowgen").
+  routes_prefix: "/api/flowgen"
 # Host coordination configuration (optional).
 host:
   enabled: true
   type: k8s
+# Event channel buffer size for all flows (optional, defaults to 10000).
+event_buffer_size: 10000

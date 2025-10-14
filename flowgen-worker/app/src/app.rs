@@ -208,6 +208,10 @@ impl App {
                 flow_builder = flow_builder.http_server(server);
             }
 
+            if let Some(buffer_size) = app_config.event_buffer_size {
+                flow_builder = flow_builder.event_buffer_size(buffer_size);
+            }
+
             match flow_builder.build() {
                 Ok(flow) => flows.push(flow),
                 Err(e) => {

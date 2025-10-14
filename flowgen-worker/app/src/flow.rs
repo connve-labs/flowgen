@@ -13,7 +13,7 @@ use tokio::{
 };
 use tracing::{debug, error, info, Instrument};
 
-const DEFAULT_EVENT_BUFFER_SIZE: usize = 1000;
+const DEFAULT_EVENT_BUFFER_SIZE: usize = 10000;
 
 /// Errors that can occur during flow execution.
 #[derive(thiserror::Error, Debug)]
@@ -72,6 +72,8 @@ pub struct Flow {
     host: Option<Arc<dyn flowgen_core::host::Host>>,
     /// An optional shared cache, passed in from the main application.
     cache: Option<Arc<dyn flowgen_core::cache::Cache>>,
+    /// Event channel buffer size for this flow (from app config or DEFAULT).
+    event_buffer_size: Option<usize>,
     /// The task manager, responsible for leader election. Initialized by `init()`.,
     task_manager: Option<Arc<flowgen_core::task::manager::TaskManager>>,
     /// The shared context for all tasks in this flow. Initialized by `init()`.
@@ -137,7 +139,8 @@ impl Flow {
                 .map_err(|e| Error::MissingRequiredAttribute(e.to_string()))?,
         );
 
-        let (tx, _) = broadcast::channel(DEFAULT_EVENT_BUFFER_SIZE);
+        let buffer_size = self.event_buffer_size.unwrap_or(DEFAULT_EVENT_BUFFER_SIZE);
+        let (tx, _) = broadcast::channel(buffer_size);
 
         self.task_manager = Some(task_manager);
         self.task_context = Some(task_context);
@@ -584,6 +587,8 @@ pub struct FlowBuilder {
     host: Option<Arc<dyn flowgen_core::host::Host>>,
     /// Optional shared cache instance.
     cache: Option<Arc<dyn flowgen_core::cache::Cache>>,
+    /// Optional event channel buffer size.
+    event_buffer_size: Option<usize>,
 }
 
 impl FlowBuilder {
@@ -616,6 +621,12 @@ impl FlowBuilder {
         self
     }
 
+    /// Sets the event channel buffer size.
+    pub fn event_buffer_size(mut self, size: usize) -> Self {
+        self.event_buffer_size = Some(size);
+        self
+    }
+
     /// Builds a Flow instance from the configured options.
     ///
     /// # Errors
@@ -628,6 +639,7 @@ impl FlowBuilder {
             http_server: self.http_server,
             host: self.host,
             cache: self.cache,
+            event_buffer_size: self.event_buffer_size,
             task_manager: None,
             task_context: None,
             tx: None,
@@ -742,6 +754,6 @@ mod tests {
 
     #[test]
     fn test_constants() {
-        assert_eq!(DEFAULT_EVENT_BUFFER_SIZE, 1000);
+        assert_eq!(DEFAULT_EVENT_BUFFER_SIZE, 10_000);
     }
 }

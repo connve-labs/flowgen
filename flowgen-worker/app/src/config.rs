@@ -71,6 +71,8 @@ pub struct AppConfig {
     pub http_server: Option<HttpServerOptions>,
     /// Optional host coordination configuration.
     pub host: Option<HostOptions>,
+    /// Event channel buffer size for all flows (defaults to 10000 if not specified).
+    pub event_buffer_size: Option<usize>,
 }
 
 /// Cache type for storage backend.
@@ -265,6 +267,7 @@ mod tests {
             },
             http_server: None,
             host: None,
+            event_buffer_size: None,
         };
 
         assert!(app_config.cache.is_some());
@@ -283,6 +286,7 @@ mod tests {
             },
             http_server: None,
             host: None,
+            event_buffer_size: None,
         };
 
         assert!(app_config.cache.is_none());
@@ -303,6 +307,7 @@ mod tests {
             },
             http_server: None,
             host: None,
+            event_buffer_size: None,
         };
 
         let serialized = serde_json::to_string(&app_config).unwrap();
@@ -322,6 +327,7 @@ mod tests {
             flows: FlowOptions { dir: None },
             http_server: None,
             host: None,
+            event_buffer_size: None,
         };
 
         let cloned = app_config.clone();
@@ -471,6 +477,7 @@ mod tests {
                 routes_prefix: Some("/workers".to_string()),
             }),
             host: None,
+            event_buffer_size: None,
         };
 
         assert!(app_config.http_server.is_some());
