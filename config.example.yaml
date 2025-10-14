@@ -10,8 +10,8 @@ flows:
 http_server:
   enabled: true
   port: 3000
-  # Optional path prefix for all routes (e.g., "/api/flowgen").
-  routes_prefix: "/api/flowgen"
+  # Optional path prefix for all routes (e.g., "/api/flowgen/workers").
+  routes_prefix: "/api/flowgen/workers"
 # Host coordination configuration (optional).
 host:
   enabled: true

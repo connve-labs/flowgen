@@ -1,9 +1,12 @@
 flow:
   name: salesforce_pubsub_account_subscriber
+  # set to true if running in k8s and require only single pod running this flow (leader election)
+  # require_leader_election: true
   tasks:
     - salesforce_pubsub_subscriber:
         name: start_subscription
-        credentials: /etc/sfdc/credentials.json # update to your credentials path
+        # update to your credentials path
+        credentials_path: /etc/sfdc/credentials.json
         topic:
           name: /data/AccountChangeEvent
           durable_consumer_options:
@@ -12,7 +15,8 @@ flow:
             name: salesforce_pubsub_account_subscriber
     - nats_jetstream_publisher:
         name: publish_events
-        credentials: /etc/nats/credentials.json # update to your credentials path
+        # update to your credentials path
+        credentials_path: /etc/nats/credentials.json
         stream: flowgen_events
         stream_description: Main evenbuts of Flowgen.
         subjects:
