@@ -101,7 +101,7 @@ impl Flow {
             .any(|task| matches!(task, Task::http_webhook(_)));
 
         if has_webhooks {
-            if self.config.flow.required_leader_election.unwrap_or(false) {
+            if self.config.flow.require_leader_election.unwrap_or(false) {
                 info!(
                     "Flow {} contains a webhook; `required_leader_election` flag will be ignored.",
                     self.config.flow.name
@@ -111,7 +111,7 @@ impl Flow {
         }
 
         // Otherwise, respect the configuration.
-        self.config.flow.required_leader_election.unwrap_or(false)
+        self.config.flow.require_leader_election.unwrap_or(false)
     }
 
     /// Initializes shared resources for the flow, such as the TaskManager and TaskContext.
@@ -672,7 +672,7 @@ mod tests {
                 name: "test_flow".to_string(),
                 labels: None,
                 tasks: vec![],
-                required_leader_election: None,
+                require_leader_election: None,
             },
         });
 
@@ -707,7 +707,7 @@ mod tests {
                 name: "test_flow".to_string(),
                 labels: None,
                 tasks: vec![],
-                required_leader_election: None,
+                require_leader_election: None,
             },
         });
 
@@ -725,7 +725,7 @@ mod tests {
                 name: "success_flow".to_string(),
                 labels: None,
                 tasks: vec![],
-                required_leader_election: None,
+                require_leader_election: None,
             },
         });
         let server = Arc::new(flowgen_http::server::HttpServerBuilder::new().build());
