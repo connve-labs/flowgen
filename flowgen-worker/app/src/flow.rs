@@ -61,6 +61,9 @@ pub enum Error {
     /// Leadership channel closed unexpectedly.
     #[error("Leadership channel closed unexpectedly")]
     LeadershipChannelClosed,
+    /// Error in Salesforce Bulk API Job Creator task.
+    #[error(transparent)]
+    BulkapiJobCreatorError(#[from] flowgen_salesforce::bulkapi::job_creator::Error),
 }
 
 pub struct Flow {
@@ -502,6 +505,31 @@ async fn spawn_tasks(
                 );
                 background_tasks.push(task);
             }
+
+            Task::salesforce_bulkapi_job_creator(config) => {
+                let config = Arc::new(config.to_owned());
+                let rx = tx.subscribe();
+                let tx = tx.clone();
+                let span = tracing::Span::current();
+                let task: JoinHandle<Result<(), Error>> = tokio::spawn(
+                    async move {
+                        flowgen_salesforce::bulkapi::job_creator::ProcessorBuilder::new()
+                            .config(config)
+                            .receiver(rx)
+                            .sender(tx)
+                            .current_task_id(i)
+                            .build()
+                            .await?
+                            .run()
+                            .await?;
+
+                        Ok(())
+                    }
+                    .instrument(span),
+                );
+                background_tasks.push(task);
+            }
+
             Task::salesforce_pubsub_publisher(config) => {
                 let config = Arc::new(config.to_owned());
                 let rx = tx.subscribe();
