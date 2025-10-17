@@ -48,7 +48,7 @@ pub enum Error {
 }
 /// Event handler for generating scheduled events.
 pub struct EventHandler {
-    config: Arc<super::config::Subscriber>,
+    config: Arc<crate::task::generate::config::Subscriber>,
     tx: Sender<Event>,
     current_task_id: usize,
     task_context: Arc<crate::task::context::TaskContext>,
@@ -147,7 +147,7 @@ impl EventHandler {
 #[derive(Debug)]
 pub struct Subscriber {
     /// Configuration settings for event generation.
-    config: Arc<super::config::Subscriber>,
+    config: Arc<crate::task::generate::config::Subscriber>,
     /// Channel sender for broadcasting generated events.
     tx: Sender<Event>,
     /// Task identifier for event tracking.
@@ -192,7 +192,7 @@ impl crate::task::runner::Runner for Subscriber {
 #[derive(Default)]
 pub struct SubscriberBuilder {
     /// Generate task configuration (required for build).
-    config: Option<Arc<super::config::Subscriber>>,
+    config: Option<Arc<crate::task::generate::config::Subscriber>>,
     /// Event broadcast sender (required for build).
     tx: Option<Sender<Event>>,
     /// Current task identifier for event tracking.
@@ -208,7 +208,7 @@ impl SubscriberBuilder {
         }
     }
 
-    pub fn config(mut self, config: Arc<super::config::Subscriber>) -> Self {
+    pub fn config(mut self, config: Arc<crate::task::generate::config::Subscriber>) -> Self {
         self.config = Some(config);
         self
     }
@@ -333,7 +333,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_subscriber_builder_build_success() {
-        let config = Arc::new(crate::generate::config::Subscriber {
+        let config = Arc::new(crate::task::generate::config::Subscriber {
             name: "test".to_string(),
             message: Some("test message".to_string()),
             interval: 1,
@@ -374,7 +374,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_subscriber_builder_missing_sender() {
-        let config = Arc::new(crate::generate::config::Subscriber::default());
+        let config = Arc::new(crate::task::generate::config::Subscriber::default());
 
         let result = SubscriberBuilder::new()
             .config(config)
@@ -391,7 +391,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_subscriber_run_with_count() {
-        let config = Arc::new(crate::generate::config::Subscriber {
+        let config = Arc::new(crate::task::generate::config::Subscriber {
             name: "test".to_string(),
             message: Some("test message".to_string()),
             interval: 0,
@@ -425,7 +425,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_subscriber_event_content() {
-        let config = Arc::new(crate::generate::config::Subscriber {
+        let config = Arc::new(crate::task::generate::config::Subscriber {
             name: "test".to_string(),
             message: Some("custom message".to_string()),
             interval: 0,
@@ -457,7 +457,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_cache_key_generation() {
-        let config = Arc::new(crate::generate::config::Subscriber {
+        let config = Arc::new(crate::task::generate::config::Subscriber {
             name: "test".to_string(),
             message: None,
             interval: 1,    // Short interval for testing
@@ -504,7 +504,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_subscriber_builder_build_missing_task_context() {
-        let config = Arc::new(crate::generate::config::Subscriber::default());
+        let config = Arc::new(crate::task::generate::config::Subscriber::default());
         let (tx, _rx) = broadcast::channel(100);
 
         let result = SubscriberBuilder::new()
