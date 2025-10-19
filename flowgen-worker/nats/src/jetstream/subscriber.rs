@@ -36,18 +36,9 @@ pub enum Error {
         #[source]
         source: async_nats::jetstream::consumer::StreamError,
     },
-    /// Failed to get JetStream stream.
-    #[error("Failed to get JetStream stream: {source}")]
-    GetStream {
-        #[source]
-        source: async_nats::jetstream::context::GetStreamError,
-    },
-    /// Failed to get JetStream stream information.
-    #[error("Failed to get JetStream stream information: {source}")]
-    StreamInfo {
-        #[source]
-        source: async_nats::jetstream::stream::InfoError,
-    },
+    /// Stream management error.
+    #[error(transparent)]
+    Stream(#[from] super::stream::Error),
     /// Failed to retrieve consumer configuration information.
     #[error("Consumer configuration check failed")]
     ConsumerInfoFailed,
@@ -79,6 +70,9 @@ pub enum Error {
     /// Required configuration attribute is missing.
     #[error("Missing required attribute: {}.", _0)]
     MissingRequiredAttribute(String),
+    /// Stream configuration is missing.
+    #[error("Stream configuration is missing")]
+    NoStream,
     /// General subscriber error for wrapped external errors.
     #[error("Other error with subscriber")]
     Other(#[source] Box<dyn std::error::Error + Send + Sync>),
@@ -159,16 +153,17 @@ impl flowgen_core::task::runner::Runner for Subscriber {
             .await?;
 
         if let Some(jetstream) = client.jetstream {
-            let stream_opts = self
-                .config
-                .stream
-                .as_ref()
-                .ok_or_else(|| Error::MissingRequiredAttribute("stream".to_string()))?;
+            let stream_opts = self.config.stream.as_ref().ok_or_else(|| Error::NoStream)?;
+
+            let jetstream = match stream_opts.create_or_update {
+                true => super::stream::create_or_update_stream(jetstream, stream_opts).await?,
+                false => jetstream,
+            };
 
             let stream = jetstream
                 .get_stream(&stream_opts.name)
                 .await
-                .map_err(|e| Error::GetStream { source: e })?;
+                .map_err(|e| super::stream::Error::GetStream { source: e })?;
 
             let durable_name = self
                 .config
@@ -187,7 +182,7 @@ impl flowgen_core::task::runner::Runner for Subscriber {
                     let consumer_info = existing_consumer
                         .info()
                         .await
-                        .map_err(|e| Error::StreamInfo { source: e })?;
+                        .map_err(|_| Error::ConsumerInfoFailed)?;
                     let current_filter = consumer_info.config.filter_subject.clone();
 
                     if current_filter != self.config.subject {
@@ -357,8 +352,8 @@ mod tests {
                 max_age_secs: None,
                 max_messages_per_subject: None,
                 create_or_update: false,
-                retention: super::super::config::RetentionPolicy::Limits,
-                discard: super::super::config::DiscardPolicy::Old,
+                retention: Some(super::super::config::RetentionPolicy::Limits),
+                discard: Some(super::super::config::DiscardPolicy::Old),
             }),
             durable_name: Some("test_consumer".to_string()),
             batch_size: Some(100),
@@ -410,8 +405,8 @@ mod tests {
                 max_age_secs: None,
                 max_messages_per_subject: None,
                 create_or_update: false,
-                retention: super::super::config::RetentionPolicy::Limits,
-                discard: super::super::config::DiscardPolicy::Old,
+                retention: Some(super::super::config::RetentionPolicy::Limits),
+                discard: Some(super::super::config::DiscardPolicy::Old),
             }),
             durable_name: Some("test_consumer".to_string()),
             batch_size: Some(50),
@@ -443,8 +438,8 @@ mod tests {
                 max_age_secs: None,
                 max_messages_per_subject: None,
                 create_or_update: false,
-                retention: super::super::config::RetentionPolicy::Limits,
-                discard: super::super::config::DiscardPolicy::Old,
+                retention: Some(super::super::config::RetentionPolicy::Limits),
+                discard: Some(super::super::config::DiscardPolicy::Old),
             }),
             durable_name: Some("test_consumer".to_string()),
             batch_size: Some(25),
@@ -479,8 +474,8 @@ mod tests {
                 max_age_secs: None,
                 max_messages_per_subject: None,
                 create_or_update: false,
-                retention: super::super::config::RetentionPolicy::Limits,
-                discard: super::super::config::DiscardPolicy::Old,
+                retention: Some(super::super::config::RetentionPolicy::Limits),
+                discard: Some(super::super::config::DiscardPolicy::Old),
             }),
             durable_name: Some("chain_consumer".to_string()),
             batch_size: Some(10),
@@ -514,8 +509,8 @@ mod tests {
                 max_age_secs: None,
                 max_messages_per_subject: None,
                 create_or_update: false,
-                retention: super::super::config::RetentionPolicy::Limits,
-                discard: super::super::config::DiscardPolicy::Old,
+                retention: Some(super::super::config::RetentionPolicy::Limits),
+                discard: Some(super::super::config::DiscardPolicy::Old),
             }),
             durable_name: Some("struct_consumer".to_string()),
             batch_size: Some(1),
@@ -583,8 +578,8 @@ mod tests {
                 max_age_secs: None,
                 max_messages_per_subject: None,
                 create_or_update: false,
-                retention: super::super::config::RetentionPolicy::Limits,
-                discard: super::super::config::DiscardPolicy::Old,
+                retention: Some(super::super::config::RetentionPolicy::Limits),
+                discard: Some(super::super::config::DiscardPolicy::Old),
             }),
             durable_name: Some("test_consumer".to_string()),
             batch_size: Some(50),

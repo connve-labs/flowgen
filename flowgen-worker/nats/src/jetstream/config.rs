@@ -33,7 +33,8 @@ pub struct StreamOptions {
     pub name: String,
     /// Stream description.
     pub description: Option<String>,
-    /// Subject patterns for the stream (can include wildcards).
+    /// Subject patterns for the stream (can include wildcards). Required for publisher when creating stream.
+    #[serde(default)]
     pub subjects: Vec<String>,
     /// Maximum age of messages in seconds.
     pub max_age_secs: Option<u64>,
@@ -42,12 +43,10 @@ pub struct StreamOptions {
     /// Whether to create or update the stream if it doesn't exist or differs.
     #[serde(default)]
     pub create_or_update: bool,
-    /// Retention policy for the stream.
-    #[serde(default)]
-    pub retention: RetentionPolicy,
-    /// Discard policy for when stream limits are reached.
-    #[serde(default)]
-    pub discard: DiscardPolicy,
+    /// Retention policy for the stream. If None during update, keeps existing value.
+    pub retention: Option<RetentionPolicy>,
+    /// Discard policy for when stream limits are reached. If None during update, keeps existing value.
+    pub discard: Option<DiscardPolicy>,
 }
 
 /// NATS JetStream retention policies.
@@ -104,8 +103,8 @@ mod tests {
                 max_age_secs: None,
                 max_messages_per_subject: None,
                 create_or_update: false,
-                retention: RetentionPolicy::Limits,
-                discard: DiscardPolicy::Old,
+                retention: Some(RetentionPolicy::Limits),
+                discard: Some(DiscardPolicy::Old),
             }),
             durable_name: Some("test_consumer".to_string()),
             batch_size: Some(100),
@@ -137,8 +136,8 @@ mod tests {
                 max_age_secs: None,
                 max_messages_per_subject: None,
                 create_or_update: false,
-                retention: RetentionPolicy::Limits,
-                discard: DiscardPolicy::Old,
+                retention: Some(RetentionPolicy::Limits),
+                discard: Some(DiscardPolicy::Old),
             }),
             durable_name: Some("my_durable".to_string()),
             batch_size: Some(50),
@@ -163,8 +162,8 @@ mod tests {
                 max_age_secs: None,
                 max_messages_per_subject: None,
                 create_or_update: false,
-                retention: RetentionPolicy::Limits,
-                discard: DiscardPolicy::Old,
+                retention: Some(RetentionPolicy::Limits),
+                discard: Some(DiscardPolicy::Old),
             }),
             durable_name: Some("clone_consumer".to_string()),
             batch_size: Some(25),
@@ -196,8 +195,8 @@ mod tests {
             max_age_secs: Some(3600),
             max_messages_per_subject: Some(100),
             create_or_update: true,
-            retention: RetentionPolicy::Limits,
-            discard: DiscardPolicy::Old,
+            retention: Some(RetentionPolicy::Limits),
+            discard: Some(DiscardPolicy::Old),
         };
 
         let publisher = Publisher {
@@ -238,8 +237,8 @@ mod tests {
                 max_age_secs: Some(7200),
                 max_messages_per_subject: None,
                 create_or_update: true,
-                retention: RetentionPolicy::Limits,
-                discard: DiscardPolicy::Old,
+                retention: Some(RetentionPolicy::Limits),
+                discard: Some(DiscardPolicy::Old),
             }),
             durable_name: None,
             batch_size: None,
@@ -264,8 +263,8 @@ mod tests {
                 max_age_secs: Some(1800),
                 max_messages_per_subject: Some(1),
                 create_or_update: false,
-                retention: RetentionPolicy::WorkQueue,
-                discard: DiscardPolicy::New,
+                retention: Some(RetentionPolicy::WorkQueue),
+                discard: Some(DiscardPolicy::New),
             }),
             durable_name: None,
             batch_size: None,
@@ -305,8 +304,8 @@ mod tests {
             max_age_secs: Some(86400),
             max_messages_per_subject: None,
             create_or_update: true,
-            retention: RetentionPolicy::Interest,
-            discard: DiscardPolicy::Old,
+            retention: Some(RetentionPolicy::Interest),
+            discard: Some(DiscardPolicy::Old),
         };
 
         let publisher = Publisher {
@@ -339,8 +338,8 @@ mod tests {
                 max_age_secs: None,
                 max_messages_per_subject: None,
                 create_or_update: false,
-                retention: RetentionPolicy::Limits,
-                discard: DiscardPolicy::Old,
+                retention: Some(RetentionPolicy::Limits),
+                discard: Some(DiscardPolicy::Old),
             }),
             durable_name: Some("consumer1".to_string()),
             batch_size: Some(10),
@@ -358,8 +357,8 @@ mod tests {
                 max_age_secs: None,
                 max_messages_per_subject: None,
                 create_or_update: false,
-                retention: RetentionPolicy::Limits,
-                discard: DiscardPolicy::Old,
+                retention: Some(RetentionPolicy::Limits),
+                discard: Some(DiscardPolicy::Old),
             }),
             durable_name: Some("consumer1".to_string()),
             batch_size: Some(10),

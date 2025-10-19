@@ -1,16 +1,12 @@
 use super::message::FlowgenMessageExt;
-use async_nats::jetstream::stream::{Config, DiscardPolicy, RetentionPolicy};
 use flowgen_core::client::Client;
 use flowgen_core::event::{Event, DEFAULT_LOG_MESSAGE};
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 use tokio::sync::{broadcast::Receiver, Mutex};
 use tracing::{error, info, Instrument};
 
 /// Default subject prefix for NATS publisher.
 const DEFAULT_MESSAGE_SUBJECT: &str = "nats_jetstream_publisher";
-
-/// Default maximum age for messages in seconds (24 hours).
-const DEFAULT_MAX_AGE_SECS: u64 = 86400;
 
 /// Errors that can occur during NATS JetStream publishing operations.
 #[derive(thiserror::Error, Debug)]
@@ -24,30 +20,18 @@ pub enum Error {
         #[source]
         source: async_nats::jetstream::context::PublishError,
     },
-    /// Failed to create JetStream stream.
-    #[error("Failed to create JetStream stream: {source}")]
-    CreateStream {
-        #[source]
-        source: async_nats::jetstream::context::CreateStreamError,
-    },
-    /// Failed to get existing JetStream stream.
-    #[error("Failed to get JetStream stream: {source}")]
-    GetStream {
-        #[source]
-        source: async_nats::jetstream::context::GetStreamError,
-    },
-    /// Failed to make request to JetStream.
-    #[error("Failed to make request to JetStream: {source}")]
-    Request {
-        #[source]
-        source: async_nats::jetstream::context::RequestError,
-    },
+    /// Stream management error.
+    #[error(transparent)]
+    Stream(#[from] super::stream::Error),
     /// Error converting event to message format.
     #[error(transparent)]
     MessageConversion(#[from] super::message::Error),
     /// Required event attribute is missing.
     #[error("Missing required attribute: {}", _0)]
     MissingRequiredAttribute(String),
+    /// Stream configuration is missing.
+    #[error("Stream configuration is missing")]
+    NoStream,
     /// Client was not properly initialized or is missing.
     #[error("Client is missing or not initialized properly")]
     MissingClient(),
@@ -113,70 +97,12 @@ impl flowgen_core::task::runner::Runner for Publisher {
             .await?;
 
         if let Some(jetstream) = client.jetstream {
-            // Create/update stream if stream options are provided
-            if let Some(stream_opts) = &self.config.stream {
-                if stream_opts.create_or_update {
-                    let retention = match stream_opts.retention {
-                        super::config::RetentionPolicy::Limits => RetentionPolicy::Limits,
-                        super::config::RetentionPolicy::Interest => RetentionPolicy::Interest,
-                        super::config::RetentionPolicy::WorkQueue => RetentionPolicy::WorkQueue,
-                    };
+            let stream_opts = self.config.stream.as_ref().ok_or_else(|| Error::NoStream)?;
 
-                    let discard = match stream_opts.discard {
-                        super::config::DiscardPolicy::Old => DiscardPolicy::Old,
-                        super::config::DiscardPolicy::New => DiscardPolicy::New,
-                    };
-
-                    let max_age = stream_opts
-                        .max_age_secs
-                        .map(Duration::from_secs)
-                        .unwrap_or_else(|| Duration::from_secs(DEFAULT_MAX_AGE_SECS));
-
-                    let stream_config = Config {
-                        name: stream_opts.name.clone(),
-                        description: stream_opts.description.clone(),
-                        max_messages_per_subject: stream_opts.max_messages_per_subject.unwrap_or(1),
-                        subjects: stream_opts.subjects.clone(),
-                        discard,
-                        retention,
-                        max_age,
-                        ..Default::default()
-                    };
-
-                    let existing_stream = jetstream.get_stream(&stream_opts.name).await;
-
-                    match existing_stream {
-                        Ok(mut stream) => {
-                            // Stream exists, update it
-                            let mut updated_config = stream_config.clone();
-                            let mut subjects = stream
-                                .info()
-                                .await
-                                .map_err(|e| Error::Request { source: e })?
-                                .config
-                                .subjects
-                                .clone();
-
-                            subjects.extend(stream_opts.subjects.clone());
-                            subjects.sort();
-                            subjects.dedup();
-                            updated_config.subjects = subjects;
-
-                            jetstream
-                                .update_stream(updated_config)
-                                .await
-                                .map_err(|e| Error::CreateStream { source: e })?;
-                        }
-                        Err(_) => {
-                            // Stream doesn't exist, create it
-                            jetstream
-                                .create_stream(stream_config)
-                                .await
-                                .map_err(|e| Error::CreateStream { source: e })?;
-                        }
-                    }
-                }
-            }
+            let jetstream = match stream_opts.create_or_update {
+                true => super::stream::create_or_update_stream(jetstream, stream_opts).await?,
+                false => jetstream,
+            };
 
             let jetstream = Arc::new(Mutex::new(jetstream));
             let event_handler = EventHandler {
@@ -334,8 +260,8 @@ mod tests {
                 max_age_secs: Some(3600),
                 max_messages_per_subject: Some(1),
                 create_or_update: true,
-                retention: super::super::config::RetentionPolicy::Limits,
-                discard: super::super::config::DiscardPolicy::Old,
+                retention: Some(super::super::config::RetentionPolicy::Limits),
+                discard: Some(super::super::config::DiscardPolicy::Old),
             }),
             durable_name: None,
             batch_size: None,
@@ -411,8 +337,8 @@ mod tests {
                 max_age_secs: Some(86400),
                 max_messages_per_subject: Some(1),
                 create_or_update: true,
-                retention: super::super::config::RetentionPolicy::Limits,
-                discard: super::super::config::DiscardPolicy::Old,
+                retention: Some(super::super::config::RetentionPolicy::Limits),
+                discard: Some(super::super::config::DiscardPolicy::Old),
             }),
             durable_name: None,
             batch_size: None,
@@ -447,8 +373,8 @@ mod tests {
                 max_age_secs: Some(1800),
                 max_messages_per_subject: None,
                 create_or_update: false,
-                retention: super::super::config::RetentionPolicy::WorkQueue,
-                discard: super::super::config::DiscardPolicy::Old,
+                retention: Some(super::super::config::RetentionPolicy::WorkQueue),
+                discard: Some(super::super::config::DiscardPolicy::Old),
             }),
             durable_name: None,
             batch_size: None,
