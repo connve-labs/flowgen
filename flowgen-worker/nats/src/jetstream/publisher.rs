@@ -9,6 +9,9 @@ use tracing::{error, info, Instrument};
 /// Default subject prefix for NATS publisher.
 const DEFAULT_MESSAGE_SUBJECT: &str = "nats_jetstream_publisher";
 
+/// Default maximum age for messages in seconds (24 hours).
+const DEFAULT_MAX_AGE_SECS: u64 = 86400;
+
 /// Errors that can occur during NATS JetStream publishing operations.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -56,6 +59,7 @@ pub enum Error {
 pub struct EventHandler {
     jetstream: Arc<Mutex<async_nats::jetstream::Context>>,
     current_task_id: usize,
+    subject: String,
 }
 
 impl EventHandler {
@@ -66,12 +70,12 @@ impl EventHandler {
 
         let e = event.to_publish()?;
 
-        info!("{}: {}", DEFAULT_LOG_MESSAGE, event.subject);
+        info!("{}: {}", DEFAULT_LOG_MESSAGE, &self.subject);
 
         self.jetstream
             .lock()
             .await
-            .send_publish(event.subject.clone(), e)
+            .send_publish(self.subject.clone(), e)
             .await
             .map_err(|e| Error::Publish { source: e })?;
         Ok(())
@@ -109,50 +113,68 @@ impl flowgen_core::task::runner::Runner for Publisher {
             .await?;
 
         if let Some(jetstream) = client.jetstream {
-            let mut max_age = 86400;
-            if let Some(config_max_age) = self.config.max_age {
-                max_age = config_max_age
-            }
+            // Create/update stream if stream options are provided
+            if let Some(stream_opts) = &self.config.stream {
+                if stream_opts.create_or_update {
+                    let retention = match stream_opts.retention {
+                        super::config::RetentionPolicy::Limits => RetentionPolicy::Limits,
+                        super::config::RetentionPolicy::Interest => RetentionPolicy::Interest,
+                        super::config::RetentionPolicy::WorkQueue => RetentionPolicy::WorkQueue,
+                    };
 
-            let mut stream_config = Config {
-                name: self.config.stream.clone(),
-                description: self.config.stream_description.clone(),
-                max_messages_per_subject: 1,
-                subjects: self.config.subjects.clone(),
-                discard: DiscardPolicy::Old,
-                retention: RetentionPolicy::Limits,
-                max_age: Duration::new(max_age, 0),
-                ..Default::default()
-            };
+                    let discard = match stream_opts.discard {
+                        super::config::DiscardPolicy::Old => DiscardPolicy::Old,
+                        super::config::DiscardPolicy::New => DiscardPolicy::New,
+                    };
 
-            let stream = jetstream.get_stream(self.config.stream.clone()).await;
+                    let max_age = stream_opts
+                        .max_age_secs
+                        .map(Duration::from_secs)
+                        .unwrap_or_else(|| Duration::from_secs(DEFAULT_MAX_AGE_SECS));
 
-            match stream {
-                Ok(_) => {
-                    let mut subjects = stream
-                        .map_err(|e| Error::GetStream { source: e })?
-                        .info()
-                        .await
-                        .map_err(|e| Error::Request { source: e })?
-                        .config
-                        .subjects
-                        .clone();
+                    let stream_config = Config {
+                        name: stream_opts.name.clone(),
+                        description: stream_opts.description.clone(),
+                        max_messages_per_subject: stream_opts.max_messages_per_subject.unwrap_or(1),
+                        subjects: stream_opts.subjects.clone(),
+                        discard,
+                        retention,
+                        max_age,
+                        ..Default::default()
+                    };
 
-                    subjects.extend(self.config.subjects.clone());
-                    subjects.sort();
-                    subjects.dedup();
-                    stream_config.subjects = subjects;
+                    let existing_stream = jetstream.get_stream(&stream_opts.name).await;
 
-                    jetstream
-                        .update_stream(stream_config)
-                        .await
-                        .map_err(|e| Error::CreateStream { source: e })?;
-                }
-                Err(_) => {
-                    jetstream
-                        .create_stream(stream_config)
-                        .await
-                        .map_err(|e| Error::CreateStream { source: e })?;
+                    match existing_stream {
+                        Ok(mut stream) => {
+                            // Stream exists, update it
+                            let mut updated_config = stream_config.clone();
+                            let mut subjects = stream
+                                .info()
+                                .await
+                                .map_err(|e| Error::Request { source: e })?
+                                .config
+                                .subjects
+                                .clone();
+
+                            subjects.extend(stream_opts.subjects.clone());
+                            subjects.sort();
+                            subjects.dedup();
+                            updated_config.subjects = subjects;
+
+                            jetstream
+                                .update_stream(updated_config)
+                                .await
+                                .map_err(|e| Error::CreateStream { source: e })?;
+                        }
+                        Err(_) => {
+                            // Stream doesn't exist, create it
+                            jetstream
+                                .create_stream(stream_config)
+                                .await
+                                .map_err(|e| Error::CreateStream { source: e })?;
+                        }
+                    }
                 }
             }
 
@@ -160,6 +182,7 @@ impl flowgen_core::task::runner::Runner for Publisher {
             let event_handler = EventHandler {
                 jetstream,
                 current_task_id: self.current_task_id,
+                subject: self.config.subject.clone(),
             };
 
             Ok(event_handler)
@@ -303,10 +326,20 @@ mod tests {
         let config = Arc::new(super::super::config::Publisher {
             name: "test_publisher".to_string(),
             credentials_path: PathBuf::from("/test/creds.jwt"),
-            stream: "test_stream".to_string(),
-            stream_description: Some("Test stream".to_string()),
-            subjects: vec!["test.subject".to_string()],
-            max_age: Some(3600),
+            subject: "test.subject".to_string(),
+            stream: Some(super::super::config::StreamOptions {
+                name: "test_stream".to_string(),
+                description: Some("Test stream".to_string()),
+                subjects: vec!["test.subject".to_string()],
+                max_age_secs: Some(3600),
+                max_messages_per_subject: Some(1),
+                create_or_update: true,
+                retention: super::super::config::RetentionPolicy::Limits,
+                discard: super::super::config::DiscardPolicy::Old,
+            }),
+            durable_name: None,
+            batch_size: None,
+            delay_secs: None,
         });
 
         let builder = PublisherBuilder::new().config(config.clone());
@@ -346,10 +379,11 @@ mod tests {
         let config = Arc::new(super::super::config::Publisher {
             name: "test_publisher".to_string(),
             credentials_path: PathBuf::from("/test/creds.jwt"),
-            stream: "test_stream".to_string(),
-            stream_description: None,
-            subjects: vec!["test.subject".to_string()],
-            max_age: None,
+            subject: "test.subject".to_string(),
+            stream: None,
+            durable_name: None,
+            batch_size: None,
+            delay_secs: None,
         });
 
         let result = PublisherBuilder::new()
@@ -369,10 +403,20 @@ mod tests {
         let config = Arc::new(super::super::config::Publisher {
             name: "test_publisher".to_string(),
             credentials_path: PathBuf::from("/test/creds.jwt"),
-            stream: "test_stream".to_string(),
-            stream_description: Some("Test description".to_string()),
-            subjects: vec!["test.subject.1".to_string(), "test.subject.2".to_string()],
-            max_age: Some(86400),
+            subject: "test.subject.1".to_string(),
+            stream: Some(super::super::config::StreamOptions {
+                name: "test_stream".to_string(),
+                description: Some("Test description".to_string()),
+                subjects: vec!["test.subject.1".to_string(), "test.subject.2".to_string()],
+                max_age_secs: Some(86400),
+                max_messages_per_subject: Some(1),
+                create_or_update: true,
+                retention: super::super::config::RetentionPolicy::Limits,
+                discard: super::super::config::DiscardPolicy::Old,
+            }),
+            durable_name: None,
+            batch_size: None,
+            delay_secs: None,
         });
         let (_tx, rx) = broadcast::channel(100);
 
@@ -395,10 +439,20 @@ mod tests {
         let config = Arc::new(super::super::config::Publisher {
             name: "test_publisher".to_string(),
             credentials_path: PathBuf::from("/chain/test.creds"),
-            stream: "chain_stream".to_string(),
-            stream_description: None,
-            subjects: vec!["chain.subject".to_string()],
-            max_age: Some(1800),
+            subject: "chain.subject".to_string(),
+            stream: Some(super::super::config::StreamOptions {
+                name: "chain_stream".to_string(),
+                description: None,
+                subjects: vec!["chain.subject".to_string()],
+                max_age_secs: Some(1800),
+                max_messages_per_subject: None,
+                create_or_update: false,
+                retention: super::super::config::RetentionPolicy::WorkQueue,
+                discard: super::super::config::DiscardPolicy::Old,
+            }),
+            durable_name: None,
+            batch_size: None,
+            delay_secs: None,
         });
         let (_tx, rx) = broadcast::channel(50);
 
@@ -420,10 +474,11 @@ mod tests {
         let config = Arc::new(super::super::config::Publisher {
             name: "test_publisher".to_string(),
             credentials_path: PathBuf::from("/test/creds.jwt"),
-            stream: "test_stream".to_string(),
-            stream_description: None,
-            subjects: vec!["test.subject".to_string()],
-            max_age: None,
+            subject: "test.subject".to_string(),
+            stream: None,
+            durable_name: None,
+            batch_size: None,
+            delay_secs: None,
         });
         let (_tx, rx) = broadcast::channel(100);
 

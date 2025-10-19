@@ -12,6 +12,9 @@ use tracing::{error, info, Instrument};
 /// Default subject prefix for NATS subscriber.
 const DEFAULT_MESSAGE_SUBJECT: &str = "nats_jetstream_subscriber";
 
+/// Default batch size for fetching messages.
+const DEFAULT_BATCH_SIZE: usize = 100;
+
 /// Errors that can occur during NATS JetStream subscription operations.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -105,7 +108,8 @@ impl EventHandler {
                 .messages()
                 .await
                 .map_err(|e| Error::ConsumerStream { source: e })?;
-            let mut batch = stream.take(self.config.batch_size);
+            let batch_size = self.config.batch_size.unwrap_or(DEFAULT_BATCH_SIZE);
+            let mut batch = stream.take(batch_size);
 
             while let Some(message) = batch.next().await {
                 if let Ok(message) = message {
@@ -155,18 +159,30 @@ impl flowgen_core::task::runner::Runner for Subscriber {
             .await?;
 
         if let Some(jetstream) = client.jetstream {
+            let stream_opts = self
+                .config
+                .stream
+                .as_ref()
+                .ok_or_else(|| Error::MissingRequiredAttribute("stream".to_string()))?;
+
             let stream = jetstream
-                .get_stream(self.config.stream.clone())
+                .get_stream(&stream_opts.name)
                 .await
                 .map_err(|e| Error::GetStream { source: e })?;
 
+            let durable_name = self
+                .config
+                .durable_name
+                .as_ref()
+                .ok_or_else(|| Error::MissingRequiredAttribute("durable_name".to_string()))?;
+
             let consumer_config = jetstream::consumer::pull::Config {
-                durable_name: Some(self.config.durable_name.clone()),
+                durable_name: Some(durable_name.clone()),
                 filter_subject: self.config.subject.clone(),
                 ..Default::default()
             };
 
-            let consumer = match stream.get_consumer(&self.config.durable_name).await {
+            let consumer = match stream.get_consumer(durable_name).await {
                 Ok(mut existing_consumer) => {
                     let consumer_info = existing_consumer
                         .info()
@@ -176,7 +192,7 @@ impl flowgen_core::task::runner::Runner for Subscriber {
 
                     if current_filter != self.config.subject {
                         return Err(Error::ConsumerFilterMismatch {
-                            consumer: self.config.durable_name.clone(),
+                            consumer: durable_name.clone(),
                             existing: current_filter,
                             expected: self.config.subject.clone(),
                         });
@@ -333,10 +349,19 @@ mod tests {
         let config = Arc::new(super::super::config::Subscriber {
             name: "test_subscriber".to_string(),
             credentials_path: PathBuf::from("/test/creds.jwt"),
-            stream: "test_stream".to_string(),
             subject: "test.subject".to_string(),
-            durable_name: "test_consumer".to_string(),
-            batch_size: 100,
+            stream: Some(super::super::config::StreamOptions {
+                name: "test_stream".to_string(),
+                description: None,
+                subjects: vec!["test.>".to_string()],
+                max_age_secs: None,
+                max_messages_per_subject: None,
+                create_or_update: false,
+                retention: super::super::config::RetentionPolicy::Limits,
+                discard: super::super::config::DiscardPolicy::Old,
+            }),
+            durable_name: Some("test_consumer".to_string()),
+            batch_size: Some(100),
             delay_secs: Some(5),
         });
 
@@ -377,10 +402,19 @@ mod tests {
         let config = Arc::new(super::super::config::Subscriber {
             name: "test_subscriber".to_string(),
             credentials_path: PathBuf::from("/test/creds.jwt"),
-            stream: "test_stream".to_string(),
             subject: "test.subject".to_string(),
-            durable_name: "test_consumer".to_string(),
-            batch_size: 50,
+            stream: Some(super::super::config::StreamOptions {
+                name: "test_stream".to_string(),
+                description: None,
+                subjects: vec!["test.>".to_string()],
+                max_age_secs: None,
+                max_messages_per_subject: None,
+                create_or_update: false,
+                retention: super::super::config::RetentionPolicy::Limits,
+                discard: super::super::config::DiscardPolicy::Old,
+            }),
+            durable_name: Some("test_consumer".to_string()),
+            batch_size: Some(50),
             delay_secs: None,
         });
 
@@ -401,10 +435,19 @@ mod tests {
         let config = Arc::new(super::super::config::Subscriber {
             name: "test_subscriber".to_string(),
             credentials_path: PathBuf::from("/test/creds.jwt"),
-            stream: "test_stream".to_string(),
             subject: "test.subject.*".to_string(),
-            durable_name: "test_consumer".to_string(),
-            batch_size: 25,
+            stream: Some(super::super::config::StreamOptions {
+                name: "test_stream".to_string(),
+                description: None,
+                subjects: vec!["test.>".to_string()],
+                max_age_secs: None,
+                max_messages_per_subject: None,
+                create_or_update: false,
+                retention: super::super::config::RetentionPolicy::Limits,
+                discard: super::super::config::DiscardPolicy::Old,
+            }),
+            durable_name: Some("test_consumer".to_string()),
+            batch_size: Some(25),
             delay_secs: Some(10),
         });
         let (tx, _rx) = broadcast::channel(100);
@@ -428,10 +471,19 @@ mod tests {
         let config = Arc::new(super::super::config::Subscriber {
             name: "test_subscriber".to_string(),
             credentials_path: PathBuf::from("/chain/test.creds"),
-            stream: "chain_stream".to_string(),
             subject: "chain.subject".to_string(),
-            durable_name: "chain_consumer".to_string(),
-            batch_size: 10,
+            stream: Some(super::super::config::StreamOptions {
+                name: "chain_stream".to_string(),
+                description: None,
+                subjects: vec!["chain.>".to_string()],
+                max_age_secs: None,
+                max_messages_per_subject: None,
+                create_or_update: false,
+                retention: super::super::config::RetentionPolicy::Limits,
+                discard: super::super::config::DiscardPolicy::Old,
+            }),
+            durable_name: Some("chain_consumer".to_string()),
+            batch_size: Some(10),
             delay_secs: Some(1),
         });
         let (tx, _rx) = broadcast::channel(50);
@@ -454,10 +506,19 @@ mod tests {
         let config = Arc::new(super::super::config::Subscriber {
             name: "test_subscriber".to_string(),
             credentials_path: PathBuf::from("/test/creds.jwt"),
-            stream: "struct_test".to_string(),
             subject: "struct.test".to_string(),
-            durable_name: "struct_consumer".to_string(),
-            batch_size: 1,
+            stream: Some(super::super::config::StreamOptions {
+                name: "struct_test".to_string(),
+                description: None,
+                subjects: vec!["struct.>".to_string()],
+                max_age_secs: None,
+                max_messages_per_subject: None,
+                create_or_update: false,
+                retention: super::super::config::RetentionPolicy::Limits,
+                discard: super::super::config::DiscardPolicy::Old,
+            }),
+            durable_name: Some("struct_consumer".to_string()),
+            batch_size: Some(1),
             delay_secs: None,
         });
         let (tx, _rx) = broadcast::channel(1);
@@ -514,10 +575,19 @@ mod tests {
         let config = Arc::new(super::super::config::Subscriber {
             name: "test_subscriber".to_string(),
             credentials_path: PathBuf::from("/test/creds.jwt"),
-            stream: "test_stream".to_string(),
             subject: "test.subject".to_string(),
-            durable_name: "test_consumer".to_string(),
-            batch_size: 50,
+            stream: Some(super::super::config::StreamOptions {
+                name: "test_stream".to_string(),
+                description: None,
+                subjects: vec!["test.>".to_string()],
+                max_age_secs: None,
+                max_messages_per_subject: None,
+                create_or_update: false,
+                retention: super::super::config::RetentionPolicy::Limits,
+                discard: super::super::config::DiscardPolicy::Old,
+            }),
+            durable_name: Some("test_consumer".to_string()),
+            batch_size: Some(50),
             delay_secs: None,
         });
         let (tx, _rx) = broadcast::channel(100);
