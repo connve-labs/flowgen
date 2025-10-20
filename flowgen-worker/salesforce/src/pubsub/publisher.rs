@@ -4,7 +4,6 @@ use flowgen_core::client::Client;
 use flowgen_core::config::ConfigExt;
 use flowgen_core::event::{generate_subject, Event, SenderExt, SubjectSuffix};
 use salesforce_pubsub::eventbus::v1::{ProducerEvent, PublishRequest, SchemaRequest, TopicRequest};
-use serde_json::{json, Value};
 use std::sync::Arc;
 use tokio::sync::{broadcast::Receiver, Mutex};
 use tracing::{error, Instrument};
@@ -91,73 +90,16 @@ impl EventHandler {
         let mut publish_payload = config.payload;
 
         let now = Utc::now().timestamp_millis();
-        publish_payload.insert("CreatedDate".to_string(), json!(now));
+        publish_payload.insert(
+            "CreatedDate".to_string(),
+            serde_json::Value::Number(serde_json::Number::from(now)),
+        );
 
-        // Convert the serde_json::Value map to an Avro record, respecting the schema.
-        let record = {
-            let mut avro_fields = Vec::new();
-            if let AvroSchema::Record(record_schema) = self.schema.as_ref() {
-                for field in &record_schema.fields {
-                    let value = publish_payload.get(&field.name).unwrap_or(&Value::Null);
-
-                    // This is a recursive function defined inside a block, which is a bit unusual but works.
-                    // It converts a serde_json::Value to an apache_avro::Value based on a schema.
-                    fn convert_value(v: &Value, schema: &AvroSchema) -> AvroValue {
-                        match (v, schema) {
-                            (Value::Null, _) => AvroValue::Null,
-                            (Value::Bool(b), &AvroSchema::Boolean) => AvroValue::Boolean(*b),
-                            (Value::Number(n), &AvroSchema::Long) => {
-                                n.as_i64().map_or(AvroValue::Null, AvroValue::Long)
-                            }
-                            (Value::Number(n), &AvroSchema::Int) => n
-                                .as_i64()
-                                .map_or(AvroValue::Null, |i| AvroValue::Int(i as i32)),
-                            (Value::Number(n), &AvroSchema::Double) => {
-                                n.as_f64().map_or(AvroValue::Null, AvroValue::Double)
-                            }
-                            (Value::Number(n), &AvroSchema::Float) => n
-                                .as_f64()
-                                .map_or(AvroValue::Null, |f| AvroValue::Float(f as f32)),
-                            (Value::String(s), &AvroSchema::String) => AvroValue::String(s.clone()),
-
-                            // Handle optional fields via Unions (e.g., ["null", "string"])
-                            (_, AvroSchema::Union(union_schema)) => {
-                                // If the value is null, use the null variant (index 0)
-                                if v.is_null() {
-                                    return AvroValue::Union(0, Box::new(AvroValue::Null));
-                                }
-
-                                // Otherwise, find the non-null variant and wrap the value
-                                for (index, variant_schema) in
-                                    union_schema.variants().iter().enumerate()
-                                {
-                                    match variant_schema {
-                                        AvroSchema::Null => continue,
-                                        _ => {
-                                            let converted_value = convert_value(v, variant_schema);
-                                            return AvroValue::Union(
-                                                index as u32,
-                                                Box::new(converted_value),
-                                            );
-                                        }
-                                    }
-                                }
-
-                                // Fallback to null if no matching variant found
-                                AvroValue::Union(0, Box::new(AvroValue::Null))
-                            }
-
-                            // NOTE: Does not handle nested Records, Arrays, Enums, Maps, etc.
-                            _ => AvroValue::Null,
-                        }
-                    }
-
-                    let avro_value = convert_value(value, &field.schema);
-                    avro_fields.push((field.name.clone(), avro_value));
-                }
-            }
-            AvroValue::Record(avro_fields)
-        };
+        // Convert serde_json::Map to Avro Record using From<serde_json::Value> trait
+        let json_value = serde_json::Value::Object(publish_payload);
+        let record = AvroValue::from(json_value)
+            .resolve(self.schema.as_ref())
+            .map_err(|e| Error::Avro { source: e })?;
 
         let mut writer = Writer::new(self.schema.as_ref(), Vec::new());
         writer

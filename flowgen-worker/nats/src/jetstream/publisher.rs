@@ -174,7 +174,7 @@ impl flowgen_core::task::runner::Runner for Publisher {
                 current_task_id: self.current_task_id,
                 subject: self.config.subject.clone(),
                 tx: self.tx.clone(),
-                config: self.config.clone(),
+                config: Arc::clone(&self.config),
             };
 
             Ok(event_handler)
