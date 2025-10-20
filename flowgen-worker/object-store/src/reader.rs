@@ -1,9 +1,7 @@
 use super::config::{DEFAULT_AVRO_EXTENSION, DEFAULT_CSV_EXTENSION, DEFAULT_JSON_EXTENSION};
 use bytes::{Bytes, BytesMut};
 use flowgen_core::buffer::{ContentType, FromReader};
-use flowgen_core::event::{
-    generate_subject, Event, EventBuilder, SubjectSuffix, DEFAULT_LOG_MESSAGE,
-};
+use flowgen_core::event::{generate_subject, Event, EventBuilder, SenderExt, SubjectSuffix};
 use flowgen_core::{client::Client, event::EventData};
 use futures::StreamExt;
 use object_store::GetResultPayload;
@@ -205,9 +203,8 @@ impl EventHandler {
                 .current_task_id(self.current_task_id)
                 .build()?;
 
-            info!("{}: {}", DEFAULT_LOG_MESSAGE, e.subject);
             self.tx
-                .send(e)
+                .send_with_logging(e)
                 .map_err(|e| Error::SendMessage { source: e })?;
         }
 

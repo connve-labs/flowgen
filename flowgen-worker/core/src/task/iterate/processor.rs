@@ -3,13 +3,11 @@
 //! Processes events containing JSON arrays and emits individual events
 //! for each array element, enabling fan-out processing patterns.
 
-use crate::event::{
-    generate_subject, Event, EventBuilder, EventData, SubjectSuffix, DEFAULT_LOG_MESSAGE,
-};
+use crate::event::{generate_subject, Event, EventBuilder, EventData, SenderExt, SubjectSuffix};
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::broadcast::{Receiver, Sender};
-use tracing::{error, info, Instrument};
+use tracing::{error, Instrument};
 
 /// Default subject prefix for loop processor events.
 const DEFAULT_MESSAGE_SUBJECT: &str = "loop";
@@ -106,9 +104,8 @@ impl EventHandler {
                 .current_task_id(self.current_task_id)
                 .build()?;
 
-            info!("{}: {}", DEFAULT_LOG_MESSAGE, e.subject);
             self.tx
-                .send(e)
+                .send_with_logging(e)
                 .map_err(|e| Error::SendMessage { source: e })?;
         }
 

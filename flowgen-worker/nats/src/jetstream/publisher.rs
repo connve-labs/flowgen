@@ -1,12 +1,37 @@
 use super::message::FlowgenMessageExt;
 use flowgen_core::client::Client;
-use flowgen_core::event::{Event, DEFAULT_LOG_MESSAGE};
+use flowgen_core::event::{
+    generate_subject, Event, EventBuilder, EventData, SenderExt, SubjectSuffix,
+};
 use std::sync::Arc;
-use tokio::sync::{broadcast::Receiver, Mutex};
-use tracing::{error, info, Instrument};
+use tokio::sync::{
+    broadcast::{Receiver, Sender},
+    Mutex,
+};
+use tracing::{error, Instrument};
 
 /// Default subject prefix for NATS publisher.
 const DEFAULT_MESSAGE_SUBJECT: &str = "nats_jetstream_publisher";
+
+/// Serializable representation of a NATS JetStream publish acknowledgment.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct PublishAck {
+    pub stream: String,
+    pub sequence: u64,
+    pub domain: Option<String>,
+    pub duplicate: bool,
+}
+
+impl From<async_nats::jetstream::publish::PublishAck> for PublishAck {
+    fn from(ack: async_nats::jetstream::publish::PublishAck) -> Self {
+        Self {
+            stream: ack.stream,
+            sequence: ack.sequence,
+            domain: Some(ack.domain),
+            duplicate: ack.duplicate,
+        }
+    }
+}
 
 /// Errors that can occur during NATS JetStream publishing operations.
 #[derive(thiserror::Error, Debug)]
@@ -38,12 +63,29 @@ pub enum Error {
     /// Host coordination error.
     #[error(transparent)]
     Host(#[from] flowgen_core::host::Error),
+    /// Failed to send event through broadcast channel.
+    #[error("Failed to send event message: {source}")]
+    SendMessage {
+        #[source]
+        source: tokio::sync::broadcast::error::SendError<Event>,
+    },
+    /// JSON serialization error.
+    #[error("JSON serialization failed: {source}")]
+    SerdeJson {
+        #[source]
+        source: serde_json::Error,
+    },
+    /// Event building error.
+    #[error(transparent)]
+    Event(#[from] flowgen_core::event::Error),
 }
 
 pub struct EventHandler {
     jetstream: Arc<Mutex<async_nats::jetstream::Context>>,
     current_task_id: usize,
     subject: String,
+    tx: Sender<Event>,
+    config: Arc<super::config::Publisher>,
 }
 
 impl EventHandler {
@@ -54,14 +96,34 @@ impl EventHandler {
 
         let e = event.to_publish()?;
 
-        info!("{}: {}", DEFAULT_LOG_MESSAGE, &self.subject);
-
-        self.jetstream
+        let ack_future = self
+            .jetstream
             .lock()
             .await
             .send_publish(self.subject.clone(), e)
             .await
             .map_err(|e| Error::Publish { source: e })?;
+
+        let ack = ack_future.await.map_err(|e| Error::Publish { source: e })?;
+        let ack: PublishAck = ack.into();
+        let ack_json = serde_json::to_value(&ack).map_err(|e| Error::SerdeJson { source: e })?;
+
+        let subject = generate_subject(
+            Some(&self.config.name),
+            DEFAULT_MESSAGE_SUBJECT,
+            SubjectSuffix::Timestamp,
+        );
+
+        let e = EventBuilder::new()
+            .subject(subject)
+            .data(EventData::Json(ack_json))
+            .current_task_id(self.current_task_id)
+            .build()?;
+
+        self.tx
+            .send_with_logging(e)
+            .map_err(|e| Error::SendMessage { source: e })?;
+
         Ok(())
     }
 }
@@ -73,6 +135,8 @@ pub struct Publisher {
     config: Arc<super::config::Publisher>,
     /// Receiver for incoming events to publish.
     rx: Receiver<Event>,
+    /// Channel sender for response events.
+    tx: Sender<Event>,
     /// Current task identifier for event filtering.
     current_task_id: usize,
     /// Task execution context providing metadata and runtime configuration.
@@ -109,6 +173,8 @@ impl flowgen_core::task::runner::Runner for Publisher {
                 jetstream,
                 current_task_id: self.current_task_id,
                 subject: self.config.subject.clone(),
+                tx: self.tx.clone(),
+                config: self.config.clone(),
             };
 
             Ok(event_handler)
@@ -154,6 +220,8 @@ pub struct PublisherBuilder {
     config: Option<Arc<super::config::Publisher>>,
     /// Optional event receiver.
     rx: Option<Receiver<Event>>,
+    /// Optional event sender.
+    tx: Option<Sender<Event>>,
     /// Current task identifier for event processing.
     current_task_id: usize,
     /// Task execution context providing metadata and runtime configuration.
@@ -174,6 +242,11 @@ impl PublisherBuilder {
 
     pub fn receiver(mut self, receiver: Receiver<Event>) -> Self {
         self.rx = Some(receiver);
+        self
+    }
+
+    pub fn sender(mut self, sender: Sender<Event>) -> Self {
+        self.tx = Some(sender);
         self
     }
 
@@ -198,6 +271,9 @@ impl PublisherBuilder {
             rx: self
                 .rx
                 .ok_or_else(|| Error::MissingRequiredAttribute("receiver".to_string()))?,
+            tx: self
+                .tx
+                .ok_or_else(|| Error::MissingRequiredAttribute("sender".to_string()))?,
             current_task_id: self.current_task_id,
             _task_context: self
                 .task_context
@@ -344,11 +420,12 @@ mod tests {
             batch_size: None,
             delay_secs: None,
         });
-        let (_tx, rx) = broadcast::channel(100);
+        let (tx, rx) = broadcast::channel(100);
 
         let result = PublisherBuilder::new()
             .config(config.clone())
             .receiver(rx)
+            .sender(tx)
             .current_task_id(5)
             .task_context(create_mock_task_context())
             .build()
@@ -380,11 +457,12 @@ mod tests {
             batch_size: None,
             delay_secs: None,
         });
-        let (_tx, rx) = broadcast::channel(50);
+        let (tx, rx) = broadcast::channel(50);
 
         let publisher = PublisherBuilder::new()
             .config(config.clone())
             .receiver(rx)
+            .sender(tx)
             .current_task_id(10)
             .task_context(create_mock_task_context())
             .build()
@@ -406,11 +484,12 @@ mod tests {
             batch_size: None,
             delay_secs: None,
         });
-        let (_tx, rx) = broadcast::channel(100);
+        let (tx, rx) = broadcast::channel(100);
 
         let result = PublisherBuilder::new()
             .config(config)
             .receiver(rx)
+            .sender(tx)
             .current_task_id(1)
             .build()
             .await;

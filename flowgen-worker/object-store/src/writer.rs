@@ -2,13 +2,13 @@ use super::config::{DEFAULT_AVRO_EXTENSION, DEFAULT_CSV_EXTENSION, DEFAULT_JSON_
 use bytes::Bytes;
 use chrono::{DateTime, Datelike, Utc};
 use flowgen_core::buffer::ToWriter;
-use flowgen_core::event::{Event, EventBuilder, EventData, SubjectSuffix, DEFAULT_LOG_MESSAGE};
+use flowgen_core::event::{Event, EventBuilder, EventData, SenderExt, SubjectSuffix};
 use flowgen_core::{client::Client, event::generate_subject};
 use object_store::PutPayload;
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, sync::Arc};
 use tokio::sync::{broadcast::Receiver, Mutex};
-use tracing::{error, info, Instrument};
+use tracing::{error, Instrument};
 
 /// Default subject prefix for logging messages.
 const DEFAULT_MESSAGE_SUBJECT: &str = "object_store_writer";
@@ -176,16 +176,15 @@ impl EventHandler {
         // Build and send event.
         let data = serde_json::to_value(&result).map_err(|e| Error::SerdeJson { source: e })?;
         let e = EventBuilder::new()
-            .subject(subject.clone())
+            .subject(subject)
             .data(EventData::Json(data))
             .current_task_id(self.current_task_id)
             .build()?;
 
         self.tx
-            .send(e)
+            .send_with_logging(e)
             .map_err(|e| Error::SendMessage { source: e })?;
 
-        info!("{}: {}", DEFAULT_LOG_MESSAGE, subject);
         Ok(())
     }
 

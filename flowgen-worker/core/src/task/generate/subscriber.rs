@@ -3,9 +3,7 @@
 //! Implements a timer-based event generator that creates events at regular intervals
 //! with optional message content and count limits for testing and simulation workflows.
 
-use crate::event::{
-    generate_subject, Event, EventBuilder, EventData, SubjectSuffix, DEFAULT_LOG_MESSAGE,
-};
+use crate::event::{generate_subject, Event, EventBuilder, EventData, SenderExt, SubjectSuffix};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
@@ -13,7 +11,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::{sync::broadcast::Sender, time};
-use tracing::{error, info, warn, Instrument};
+use tracing::{error, warn, Instrument};
 
 /// Default subject prefix for generated events.
 const DEFAULT_MESSAGE_SUBJECT: &str = "generate";
@@ -169,9 +167,8 @@ impl EventHandler {
                 .current_task_id(self.current_task_id)
                 .build()?;
             self.tx
-                .send(e)
+                .send_with_logging(e)
                 .map_err(|e| Error::SendMessage { source: e })?;
-            info!("{}: {}", DEFAULT_LOG_MESSAGE, subject);
 
             // Update cache with current time after sending the event.
             let current_time = SystemTime::now()

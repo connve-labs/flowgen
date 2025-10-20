@@ -4,7 +4,7 @@
 //! such as JSON to Avro with schema validation and key normalization.
 
 use crate::event::{
-    generate_subject, AvroData, Event, EventBuilder, EventData, SubjectSuffix, DEFAULT_LOG_MESSAGE,
+    generate_subject, AvroData, Event, EventBuilder, EventData, SenderExt, SubjectSuffix,
 };
 use serde_avro_fast::ser;
 use serde_json::{Map, Value};
@@ -13,7 +13,7 @@ use tokio::sync::{
     broadcast::{Receiver, Sender},
     Mutex,
 };
-use tracing::{error, info, Instrument};
+use tracing::{error, Instrument};
 
 /// Default subject prefix for converted events.
 const DEFAULT_MESSAGE_SUBJECT: &str = "convert";
@@ -172,9 +172,8 @@ impl EventHandler {
             .current_task_id(self.current_task_id)
             .build()?;
 
-        info!("{}: {}", DEFAULT_LOG_MESSAGE, e.subject);
         self.tx
-            .send(e)
+            .send_with_logging(e)
             .map_err(|e| Error::SendMessage { source: e })?;
         Ok(())
     }

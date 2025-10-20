@@ -2,12 +2,12 @@ use apache_avro::{types::Value as AvroValue, Schema as AvroSchema, Writer};
 use chrono::Utc;
 use flowgen_core::client::Client;
 use flowgen_core::config::ConfigExt;
-use flowgen_core::event::{generate_subject, Event, SubjectSuffix};
+use flowgen_core::event::{generate_subject, Event, SenderExt, SubjectSuffix};
 use salesforce_pubsub::eventbus::v1::{ProducerEvent, PublishRequest, SchemaRequest, TopicRequest};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tokio::sync::{broadcast::Receiver, Mutex};
-use tracing::{error, info, Instrument};
+use tracing::{error, Instrument};
 
 const DEFAULT_MESSAGE_SUBJECT: &str = "salesforce_pubsub_publisher";
 
@@ -191,15 +191,13 @@ impl EventHandler {
 
         let e = flowgen_core::event::EventBuilder::new()
             .data(flowgen_core::event::EventData::Json(resp_json))
-            .subject(subject.clone())
+            .subject(subject)
             .current_task_id(self.current_task_id)
             .build()?;
 
         self.tx
-            .send(e)
+            .send_with_logging(e)
             .map_err(|e| Error::SendMessage { source: e })?;
-
-        info!("Event processed: {}", subject);
 
         Ok(())
     }

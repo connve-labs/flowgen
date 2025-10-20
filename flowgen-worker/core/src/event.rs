@@ -11,6 +11,7 @@ use serde::{Serialize, Serializer};
 use serde_json::{Map, Value};
 use std::io::{Read, Seek, Write};
 use std::sync::Arc;
+use tracing::info;
 
 /// Default log message format for event processing.
 pub const DEFAULT_LOG_MESSAGE: &str = "Event processed";
@@ -21,6 +22,27 @@ pub enum SubjectSuffix<'a> {
     Timestamp,
     /// Use custom ID as suffix.
     Id(&'a str),
+}
+
+/// Extension trait for broadcast sender with automatic event logging.
+pub trait SenderExt {
+    /// Sends an event and automatically logs it.
+    fn send_with_logging(
+        &self,
+        event: Event,
+    ) -> Result<usize, tokio::sync::broadcast::error::SendError<Event>>;
+}
+
+impl SenderExt for tokio::sync::broadcast::Sender<Event> {
+    fn send_with_logging(
+        &self,
+        event: Event,
+    ) -> Result<usize, tokio::sync::broadcast::error::SendError<Event>> {
+        let subject = event.subject.clone();
+        let result = self.send(event)?;
+        info!("{}: {}", DEFAULT_LOG_MESSAGE, subject);
+        Ok(result)
+    }
 }
 
 /// Generates a structured subject string from a base subject, a required task name, and a suffix.

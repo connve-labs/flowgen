@@ -3,14 +3,12 @@
 //! Executes Rhai scripts to transform, filter, or manipulate event data.
 //! Scripts can return objects, arrays, or null to control event emission.
 
-use crate::event::{
-    generate_subject, Event, EventBuilder, EventData, SubjectSuffix, DEFAULT_LOG_MESSAGE,
-};
+use crate::event::{generate_subject, Event, EventBuilder, EventData, SenderExt, SubjectSuffix};
 use rhai::{Dynamic, Engine, Scope};
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::broadcast::{Receiver, Sender};
-use tracing::{error, info, Instrument};
+use tracing::{error, Instrument};
 
 /// Default subject prefix for script-transformed events.
 const DEFAULT_MESSAGE_SUBJECT: &str = "script";
@@ -117,13 +115,12 @@ impl EventHandler {
 
         let e = EventBuilder::new()
             .data(EventData::Json(data))
-            .subject(subject.clone())
+            .subject(subject)
             .current_task_id(self.current_task_id)
             .build()?;
 
-        info!("{}: {}", DEFAULT_LOG_MESSAGE, subject);
         self.tx
-            .send(e)
+            .send_with_logging(e)
             .map_err(|e| Error::SendMessage { source: e })?;
         Ok(())
     }

@@ -2,12 +2,12 @@ use super::message::NatsMessageExt;
 use async_nats::jetstream::{self};
 use flowgen_core::{
     client::Client,
-    event::{Event, DEFAULT_LOG_MESSAGE},
+    event::{Event, SenderExt},
 };
 use std::{sync::Arc, time::Duration};
 use tokio::{sync::broadcast::Sender, time};
 use tokio_stream::StreamExt;
-use tracing::{error, info, Instrument};
+use tracing::{error, Instrument};
 
 /// Default subject prefix for NATS subscriber.
 const DEFAULT_MESSAGE_SUBJECT: &str = "nats_jetstream_subscriber";
@@ -111,9 +111,8 @@ impl EventHandler {
                     message.ack().await.ok();
                     e.current_task_id = Some(self.current_task_id);
 
-                    info!("{}: {}", DEFAULT_LOG_MESSAGE, e.subject);
                     self.tx
-                        .send(e)
+                        .send_with_logging(e)
                         .map_err(|e| Error::SendMessage { source: e })?;
                 }
             }

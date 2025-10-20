@@ -7,7 +7,7 @@
 use crate::config::Credentials;
 use flowgen_core::{
     config::ConfigExt,
-    event::{generate_subject, Event, EventBuilder, EventData, SubjectSuffix},
+    event::{generate_subject, Event, EventBuilder, EventData, SenderExt, SubjectSuffix},
 };
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde_json::{json, Value};
@@ -16,7 +16,7 @@ use tokio::{
     fs,
     sync::broadcast::{Receiver, Sender},
 };
-use tracing::{error, info, Instrument};
+use tracing::{error, Instrument};
 
 /// Default subject for HTTP response events.
 const DEFAULT_MESSAGE_SUBJECT: &str = "http_request";
@@ -199,9 +199,8 @@ impl EventHandler {
             .build()?;
 
         self.tx
-            .send(e)
+            .send_with_logging(e)
             .map_err(|e| Error::SendMessage { source: e })?;
-        info!("Event processed: {}", subject);
         Ok(())
     }
 }
