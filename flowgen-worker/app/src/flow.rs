@@ -637,6 +637,7 @@ async fn spawn_tasks(
             Task::object_store_writer(config) => {
                 let config = Arc::new(config.to_owned());
                 let rx = tx.subscribe();
+                let tx = tx.clone();
                 let task_context = Arc::clone(task_context);
                 let span = tracing::Span::current();
                 let task: JoinHandle<Result<(), Error>> = tokio::spawn(
@@ -644,6 +645,7 @@ async fn spawn_tasks(
                         flowgen_object_store::writer::WriterBuilder::new()
                             .config(config)
                             .receiver(rx)
+                            .sender(tx)
                             .current_task_id(i)
                             .task_context(task_context)
                             .build()
