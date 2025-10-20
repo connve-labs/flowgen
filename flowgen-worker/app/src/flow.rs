@@ -589,6 +589,7 @@ async fn spawn_tasks(
             Task::salesforce_pubsub_publisher(config) => {
                 let config = Arc::new(config.to_owned());
                 let rx = tx.subscribe();
+                let tx = tx.clone();
                 let task_context = Arc::clone(task_context);
                 let span = tracing::Span::current();
                 let task: JoinHandle<Result<(), Error>> = tokio::spawn(
@@ -596,6 +597,7 @@ async fn spawn_tasks(
                         flowgen_salesforce::pubsub::publisher::PublisherBuilder::new()
                             .config(config)
                             .receiver(rx)
+                            .sender(tx)
                             .current_task_id(i)
                             .task_context(task_context)
                             .build()

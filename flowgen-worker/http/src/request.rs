@@ -184,7 +184,8 @@ impl EventHandler {
             .await
             .map_err(|e| Error::Reqwest { source: e })?;
 
-        let data = json!(resp);
+        // Try to parse as JSON, fall back to string if it fails
+        let data = serde_json::from_str::<Value>(&resp).unwrap_or_else(|_| json!(resp));
 
         let subject = generate_subject(
             Some(&self.config.name),
