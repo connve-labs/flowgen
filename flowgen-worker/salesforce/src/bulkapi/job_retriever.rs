@@ -210,8 +210,7 @@ impl EventHandler {
                                     .token_result
                                     .ok_or_else(Error::NoSalesforceAuthToken)?;
 
-                                client =
-                                    client.bearer_auth(token_result.access_token().secret());
+                                client = client.bearer_auth(token_result.access_token().secret());
 
                                 // Download the CSV result data
                                 let resp = client
@@ -229,8 +228,8 @@ impl EventHandler {
                                 file.write_all(&resp).map_err(|e| Error::IO { source: e })?;
 
                                 // Reopen file for reading and schema inference
-                                let mut file = File::open(file_path)
-                                    .map_err(|e| Error::IO { source: e })?;
+                                let mut file =
+                                    File::open(file_path).map_err(|e| Error::IO { source: e })?;
 
                                 // Use Arrow to infer CSV schema from the first 100 rows
                                 let (schema, _) = Format::default()
@@ -242,12 +241,11 @@ impl EventHandler {
                                 file.rewind().map_err(|e| Error::IO { source: e })?;
 
                                 // Create Arrow CSV reader with inferred schema
-                                let csv =
-                                    arrow::csv::ReaderBuilder::new(Arc::new(schema.clone()))
-                                        .with_header(true)
-                                        .with_batch_size(100)
-                                        .build(&file)
-                                        .map_err(|e| Error::Arrow { source: e })?;
+                                let csv = arrow::csv::ReaderBuilder::new(Arc::new(schema.clone()))
+                                    .with_header(true)
+                                    .with_batch_size(100)
+                                    .build(&file)
+                                    .map_err(|e| Error::Arrow { source: e })?;
 
                                 // Extract JobIdentifier for metadata retrieval
                                 match fields.iter().find(|(name, _)| name == "JobIdentifier") {
@@ -285,9 +283,8 @@ impl EventHandler {
                                             .await
                                             .map_err(|e| Error::Reqwest { source: e })?;
 
-                                        let job_metadata: JobResponse =
-                                            serde_json::from_str(&resp)
-                                                .map_err(|e| Error::SerdeJson { source: e })?;
+                                        let job_metadata: JobResponse = serde_json::from_str(&resp)
+                                            .map_err(|e| Error::SerdeJson { source: e })?;
 
                                         let subject = generate_subject(
                                             Some(job_metadata.object.to_lowercase().as_str()),
@@ -300,16 +297,14 @@ impl EventHandler {
                                             // Create event with Arrow record batch data
                                             let e = EventBuilder::new()
                                                 .data(EventData::ArrowRecordBatch(
-                                                    data.map_err(|e| Error::Arrow {
-                                                        source: e,
-                                                    })?,
+                                                    data.map_err(|e| Error::Arrow { source: e })?,
                                                 ))
                                                 .subject(subject.clone())
                                                 .current_task_id(self.current_task_id)
                                                 .build()?;
-                                            self.tx.send_with_logging(e).map_err(|e| {
-                                                Error::SendMessage { source: e }
-                                            })?;
+                                            self.tx
+                                                .send_with_logging(e)
+                                                .map_err(|e| Error::SendMessage { source: e })?;
                                         }
                                     }
                                     Some((_, _)) => {}

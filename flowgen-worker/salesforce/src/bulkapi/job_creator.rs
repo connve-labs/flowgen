@@ -732,11 +732,11 @@ mod tests {
     fn test_error_from_conversions() {
         // Test that Error implements From for various source errors
         let service_err = Error::MissingRequiredAttribute("test".to_string());
-        let _: Error = service_err.into();
+        let _: Error = service_err;
 
         // These conversions should compile
         fn _test_conversions() {
-            let _: Error = Error::MissingRequiredAttribute("x".to_string()).into();
+            let _: Error = Error::MissingRequiredAttribute("x".to_string());
         }
     }
 
@@ -750,7 +750,7 @@ mod tests {
 
     #[test]
     fn test_multiple_operations_distinct() {
-        let ops = vec![
+        let ops = [
             super::super::config::Operation::Query,
             super::super::config::Operation::QueryAll,
             super::super::config::Operation::Insert,

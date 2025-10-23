@@ -630,7 +630,7 @@ mod tests {
 
     #[test]
     fn test_all_delimiters_unique() {
-        let delimiters = vec![
+        let delimiters = [
             ColumnDelimiter::Comma,
             ColumnDelimiter::Tab,
             ColumnDelimiter::Semicolon,
