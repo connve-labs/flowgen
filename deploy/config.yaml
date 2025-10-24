@@ -5,7 +5,7 @@ cache:
   type: nats
 # Points to config directory.
 flows:
-  dir: "/etc/app/flows/*.json"
+  dir: "/etc/app/flows/*.yaml"
 # HTTP server configuration (optional, defaults to port 3000).
 http_server:
   enabled: true
