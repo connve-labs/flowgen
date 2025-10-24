@@ -1,9 +1,8 @@
 use apache_avro::types::Value;
 use apache_avro::{from_avro_datum, Schema};
 use arrow::csv::reader::Format;
-use flowgen_core::{
-    client::Client,
-    event::{generate_subject, Event, EventBuilder, EventData, SenderExt, SubjectSuffix},
+use flowgen_core::event::{
+    generate_subject, Event, EventBuilder, EventData, SenderExt, SubjectSuffix,
 };
 use oauth2::TokenResponse;
 use serde::Deserialize;
@@ -44,7 +43,7 @@ pub enum Error {
     },
     /// Salesforce authentication or client initialization error.
     #[error(transparent)]
-    SalesforceAuth(#[from] crate::client::Error),
+    SalesforceAuth(#[from] salesforce_core::client::Error),
     /// Event creation or processing error.
     #[error(transparent)]
     Event(#[from] flowgen_core::event::Error),
@@ -102,7 +101,7 @@ pub struct EventHandler {
     /// Task identifier for event correlation.
     current_task_id: usize,
     /// SFDC client.
-    sfdc_client: crate::client::Client,
+    sfdc_client: salesforce_core::client::Client,
 }
 
 impl EventHandler {
@@ -252,7 +251,7 @@ impl flowgen_core::task::runner::Runner for JobRetriever {
             .map_err(|e| Error::Reqwest { source: e })?;
         let client = Arc::new(client);
 
-        let sfdc_client = crate::client::Builder::new()
+        let sfdc_client = salesforce_core::client::Builder::new()
             .credentials_path(config.credentials_path.clone())
             .build()?
             .connect()
@@ -618,7 +617,7 @@ mod tests {
 
     #[test]
     fn test_error_from_conversions() {
-        let sfdc_err = crate::client::Error::MissingRequiredAttribute("test".to_string());
+        let sfdc_err = salesforce_core::client::Error::MissingRequiredAttribute("test".to_string());
         let _: Error = sfdc_err.into();
 
         let event_err = flowgen_core::event::Error::MissingRequiredAttribute("test".to_string());

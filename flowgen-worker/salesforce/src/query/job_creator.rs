@@ -1,8 +1,5 @@
 use chrono::Utc;
-use flowgen_core::{
-    client::Client,
-    event::{Event, EventBuilder, EventData, SenderExt},
-};
+use flowgen_core::event::{Event, EventBuilder, EventData, SenderExt};
 use oauth2::TokenResponse;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -40,7 +37,7 @@ pub enum Error {
 
     /// Salesforce authentication or client initialization error.
     #[error(transparent)]
-    SalesforceAuth(#[from] crate::client::Error),
+    SalesforceAuth(#[from] salesforce_core::client::Error),
 
     /// Event creation or processing error.
     #[error(transparent)]
@@ -93,7 +90,7 @@ pub struct EventHandler {
     /// Task identifier for event correlation.
     current_task_id: usize,
     /// SFDC client
-    sfdc_client: crate::client::Client,
+    sfdc_client: salesforce_core::client::Client,
 }
 
 impl EventHandler {
@@ -187,7 +184,7 @@ impl flowgen_core::task::runner::Runner for JobCreator {
             .map_err(|e| Error::Reqwest { source: e })?;
         let client = Arc::new(client);
 
-        let sfdc_client = crate::client::Builder::new()
+        let sfdc_client = salesforce_core::client::Builder::new()
             .credentials_path(config.credentials_path.clone())
             .build()?
             .connect()
