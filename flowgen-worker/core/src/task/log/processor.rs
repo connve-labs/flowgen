@@ -23,6 +23,10 @@ pub struct EventHandler {
     config: Arc<super::config::Processor>,
     /// Current task identifier for event filtering.
     task_id: usize,
+    /// Task type identifier.
+    task_type: &'static str,
+    /// Task context (unused but kept for consistency).
+    _task_context: Arc<crate::task::context::TaskContext>,
 }
 
 impl EventHandler {
@@ -123,6 +127,8 @@ impl crate::task::runner::Runner for Processor {
         let event_handler = EventHandler {
             config: Arc::clone(&self.config),
             task_id: self.task_id,
+            task_type: self.task_type,
+            _task_context: Arc::clone(&self._task_context),
         };
 
         Ok(event_handler)
@@ -283,6 +289,7 @@ mod tests {
             .sender(tx)
             .receiver(rx2)
             .task_id(1)
+            .task_type("test")
             .task_context(create_mock_task_context())
             .build()
             .await
@@ -320,12 +327,15 @@ mod tests {
         let event_handler = EventHandler {
             config,
             task_id: 1,
+            task_type: "test",
+            _task_context: create_mock_task_context(),
         };
 
         let input_event = EventBuilder::new()
             .data(EventData::Json(json!({"message": "test log"})))
             .subject("test.subject".to_string())
             .task_id(0)
+            .task_type("test")
             .build()
             .unwrap();
 
@@ -344,12 +354,15 @@ mod tests {
         let event_handler = EventHandler {
             config,
             task_id: 1,
+            task_type: "test",
+            _task_context: create_mock_task_context(),
         };
 
         let input_event = EventBuilder::new()
             .data(EventData::Json(json!({"message": "test log"})))
             .subject("test.subject".to_string())
             .task_id(5)
+            .task_type("test")
             .build()
             .unwrap();
 

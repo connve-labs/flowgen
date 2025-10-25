@@ -89,6 +89,8 @@ pub struct EventHandler {
     serializer: Option<Arc<AvroSerializerOptions>>,
     /// Task type for event categorization and logging.
     task_type: &'static str,
+    /// Task context (unused but kept for consistency).
+    _task_context: Arc<crate::task::context::TaskContext>,
 }
 
 /// Avro serialization configuration with schema and thread-safe serializer.
@@ -243,6 +245,7 @@ impl crate::task::runner::Runner for Processor {
             task_id: self.task_id,
             serializer,
             task_type: self.task_type,
+            _task_context: Arc::clone(&self._task_context),
         };
 
         Ok(event_handler)
@@ -435,6 +438,7 @@ mod tests {
             .sender(tx)
             .receiver(rx2)
             .task_id(1)
+            .task_type("test")
             .task_context(create_mock_task_context())
             .build()
             .await
@@ -526,13 +530,14 @@ mod tests {
             tx,
             task_id: 1,
             serializer: None,
-            task_context: create_mock_task_context(),
+            task_type: "test",
+            _task_context: create_mock_task_context(),
         };
 
         let input_event = Event {
             data: EventData::Json(json!({"test": "value"})),
             subject: "input.subject".to_string(),
-            task_id: Some(0),
+            task_id: 0,
             id: None,
             timestamp: 123456789,
             task_type: "test",
@@ -551,7 +556,7 @@ mod tests {
             _ => panic!("Expected JSON passthrough"),
         }
         assert!(output_event.subject.starts_with("convert.test."));
-        assert_eq!(output_event.task_id, Some(1));
+        assert_eq!(output_event.task_id, 1);
     }
 
     #[tokio::test]
@@ -588,7 +593,8 @@ mod tests {
             tx,
             task_id: 1,
             serializer: None,
-            task_context: create_mock_task_context(),
+            task_type: "test",
+            _task_context: create_mock_task_context(),
         };
 
         // Create a simple Avro schema and serialize test data
@@ -606,7 +612,7 @@ mod tests {
                 raw_bytes,
             }),
             subject: "input.subject".to_string(),
-            task_id: Some(0),
+            task_id: 0,
             id: None,
             timestamp: 123456789,
             task_type: "test",
@@ -625,7 +631,7 @@ mod tests {
             _ => panic!("Expected JSON output from Avro conversion"),
         }
         assert!(output_event.subject.starts_with("convert.test."));
-        assert_eq!(output_event.task_id, Some(1));
+        assert_eq!(output_event.task_id, 1);
     }
 
     #[tokio::test]
@@ -643,7 +649,8 @@ mod tests {
             tx,
             task_id: 1,
             serializer: None,
-            task_context: create_mock_task_context(),
+            task_type: "test",
+            _task_context: create_mock_task_context(),
         };
 
         let schema_str = r#"{"type": "string"}"#;
@@ -655,7 +662,7 @@ mod tests {
                 raw_bytes: raw_bytes.clone(),
             }),
             subject: "input.subject".to_string(),
-            task_id: Some(0),
+            task_id: 0,
             id: None,
             timestamp: 123456789,
             task_type: "test",
@@ -675,6 +682,6 @@ mod tests {
             _ => panic!("Expected Avro passthrough"),
         }
         assert!(output_event.subject.starts_with("convert.test."));
-        assert_eq!(output_event.task_id, Some(1));
+        assert_eq!(output_event.task_id, 1);
     }
 }

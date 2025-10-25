@@ -58,6 +58,8 @@ pub struct EventHandler {
     engine: Engine,
     /// Task type for event categorization and logging.
     task_type: &'static str,
+    /// Task context (unused but kept for consistency).
+    _task_context: Arc<crate::task::context::TaskContext>,
 }
 
 impl EventHandler {
@@ -175,6 +177,7 @@ impl crate::task::runner::Runner for Processor {
             task_id: self.task_id,
             engine,
             task_type: self.task_type,
+            _task_context: Arc::clone(&self._task_context),
         };
 
         Ok(event_handler)
@@ -336,6 +339,7 @@ mod tests {
             .sender(tx)
             .receiver(rx2)
             .task_id(1)
+            .task_type("test")
             .task_context(create_mock_task_context())
             .build()
             .await
@@ -377,7 +381,8 @@ mod tests {
             tx: tx.clone(),
             task_id: 1,
             engine: Engine::new(),
-            task_context: create_mock_task_context(),
+            task_type: "test",
+            _task_context: create_mock_task_context(),
         };
 
         let input_event = Event {
@@ -421,7 +426,8 @@ mod tests {
             tx: tx_clone,
             task_id: 1,
             engine: Engine::new(),
-            task_context: create_mock_task_context(),
+            task_type: "test",
+            _task_context: create_mock_task_context(),
         };
 
         let input_event = Event {
@@ -458,7 +464,8 @@ mod tests {
             tx,
             task_id: 1,
             engine: Engine::new(),
-            task_context: create_mock_task_context(),
+            task_type: "test",
+            _task_context: create_mock_task_context(),
         };
 
         let input_event = Event {
@@ -508,7 +515,8 @@ mod tests {
             tx,
             task_id: 1,
             engine: Engine::new(),
-            task_context: create_mock_task_context(),
+            task_type: "test",
+            _task_context: create_mock_task_context(),
         };
 
         // Create an ArrowRecordBatch event

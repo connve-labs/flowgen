@@ -554,6 +554,7 @@ mod tests {
             .config(config.clone())
             .sender(tx)
             .task_id(42)
+            .task_type("test")
             .task_context(create_mock_task_context())
             .build()
             .await;

@@ -410,6 +410,7 @@ mod tests {
             .config(config.clone())
             .sender(tx)
             .task_id(1)
+            .task_type("test")
             .task_context(create_mock_task_context())
             .build()
             .await
@@ -468,6 +469,7 @@ mod tests {
             config,
             tx,
             task_id: 1,
+            task_type: "test",
             task_context: create_mock_task_context(),
         };
 
@@ -480,8 +482,8 @@ mod tests {
 
         assert!(event1.subject.starts_with("generate.test."));
         assert!(event2.subject.starts_with("generate.test."));
-        assert_eq!(event1.task_id, Some(1));
-        assert_eq!(event2.task_id, Some(1));
+        assert_eq!(event1.task_id, 1);
+        assert_eq!(event2.task_id, 1);
 
         let _ = handle.await;
         assert!(rx.try_recv().is_err());
@@ -502,6 +504,7 @@ mod tests {
             config,
             tx,
             task_id: 0,
+            task_type: "test",
             task_context: create_mock_task_context(),
         };
 
@@ -556,6 +559,7 @@ mod tests {
             config,
             tx,
             task_id: 1,
+            task_type: "test",
             task_context,
         };
 

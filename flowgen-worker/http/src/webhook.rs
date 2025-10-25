@@ -95,6 +95,8 @@ pub struct EventHandler {
     credentials: Option<Credentials>,
     /// Task type for event categorization and logging.
     task_type: &'static str,
+    /// Task execution context providing metadata and runtime configuration.
+    _task_context: Arc<flowgen_core::task::context::TaskContext>,
 }
 
 impl EventHandler {
@@ -249,6 +251,7 @@ impl flowgen_core::task::runner::Runner for Processor {
             task_id: self.task_id,
             credentials,
             task_type: self.task_type,
+            _task_context: Arc::clone(&self._task_context),
         };
 
         Ok(event_handler)
@@ -533,6 +536,7 @@ mod tests {
             .config(config.clone())
             .sender(tx)
             .task_id(5)
+            .task_type("test")
             .task_context(create_mock_task_context())
             .build()
             .await;
@@ -559,6 +563,7 @@ mod tests {
             .config(config.clone())
             .sender(tx)
             .task_id(10)
+            .task_type("test")
             .task_context(create_mock_task_context())
             .build()
             .await
@@ -585,7 +590,8 @@ mod tests {
             tx,
             task_id: 0,
             credentials: None,
-            task_context: create_mock_task_context(),
+            task_type: "test",
+            _task_context: create_mock_task_context(),
         };
     }
 
@@ -611,7 +617,8 @@ mod tests {
             tx,
             task_id: 1,
             credentials: None,
-            task_context: create_mock_task_context(),
+            task_type: "test",
+            _task_context: create_mock_task_context(),
         };
 
         assert!(handler.config.headers.is_some());
@@ -639,7 +646,8 @@ mod tests {
             tx,
             task_id: 1,
             credentials: None,
-            task_context: create_mock_task_context(),
+            task_type: "test",
+            _task_context: create_mock_task_context(),
         };
 
         assert!(handler.config.headers.is_none());

@@ -423,7 +423,7 @@ mod tests {
 
         assert_eq!(event.subject, "test.subject");
         assert_eq!(event.id, Some("test-id".to_string()));
-        assert_eq!(event.task_id, 0);
+        assert_eq!(event.task_id, 1);
         assert!(event.timestamp > 0);
 
         match event.data {

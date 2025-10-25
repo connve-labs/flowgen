@@ -52,6 +52,8 @@ pub struct EventHandler {
     task_id: usize,
     /// Task type for event categorization and logging.
     task_type: &'static str,
+    /// Task context (unused but kept for consistency).
+    _task_context: Arc<crate::task::context::TaskContext>,
 }
 
 impl EventHandler {
@@ -145,6 +147,7 @@ impl crate::task::runner::Runner for Processor {
             tx: self.tx.clone(),
             task_id: self.task_id,
             task_type: self.task_type,
+            _task_context: Arc::clone(&self._task_context),
         };
 
         Ok(event_handler)
@@ -303,6 +306,7 @@ mod tests {
             .sender(tx)
             .receiver(rx2)
             .task_id(1)
+            .task_type("test")
             .task_context(create_mock_task_context())
             .build()
             .await
@@ -342,13 +346,14 @@ mod tests {
             config,
             tx,
             task_id: 1,
-            task_context: create_mock_task_context(),
+            task_type: "test",
+            _task_context: create_mock_task_context(),
         };
 
         let input_event = Event {
             data: EventData::Json(json!([{"id": 1}, {"id": 2}, {"id": 3}])),
             subject: "input.subject".to_string(),
-            task_id: Some(0),
+            task_id: 0,
             id: None,
             timestamp: 123456789,
             task_type: "test",
@@ -388,7 +393,8 @@ mod tests {
             config,
             tx,
             task_id: 1,
-            task_context: create_mock_task_context(),
+            task_type: "test",
+            _task_context: create_mock_task_context(),
         };
 
         let input_event = Event {
@@ -397,7 +403,7 @@ mod tests {
                 "total": 2
             })),
             subject: "input.subject".to_string(),
-            task_id: Some(0),
+            task_id: 0,
             id: None,
             timestamp: 123456789,
             task_type: "test",
@@ -437,13 +443,14 @@ mod tests {
             config,
             tx,
             task_id: 1,
-            task_context: create_mock_task_context(),
+            task_type: "test",
+            _task_context: create_mock_task_context(),
         };
 
         let input_event = Event {
             data: EventData::Json(json!({"items": [1, 2, 3]})),
             subject: "input.subject".to_string(),
-            task_id: Some(0),
+            task_id: 0,
             id: None,
             timestamp: 123456789,
             task_type: "test",
@@ -467,13 +474,14 @@ mod tests {
             config,
             tx,
             task_id: 1,
-            task_context: create_mock_task_context(),
+            task_type: "test",
+            _task_context: create_mock_task_context(),
         };
 
         let input_event = Event {
             data: EventData::Json(json!({"not": "an array"})),
             subject: "input.subject".to_string(),
-            task_id: Some(0),
+            task_id: 0,
             id: None,
             timestamp: 123456789,
             task_type: "test",

@@ -502,6 +502,7 @@ mod tests {
             .receiver(rx)
             .sender(tx)
             .task_id(5)
+            .task_type("test")
             .task_context(create_mock_task_context())
             .build()
             .await;

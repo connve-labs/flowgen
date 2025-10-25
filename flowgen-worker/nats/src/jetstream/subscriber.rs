@@ -108,9 +108,8 @@ impl EventHandler {
 
             while let Some(message) = batch.next().await {
                 if let Ok(message) = message {
-                    let mut e = message.to_event(Some(self.task_type))?;
+                    let e = message.to_event(self.task_type, self.task_id)?;
                     message.ack().await.ok();
-                    e.task_id = self.task_id;
 
                     self.tx
                         .send_with_logging(e)
