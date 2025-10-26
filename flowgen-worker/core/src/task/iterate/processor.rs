@@ -20,7 +20,7 @@ pub enum Error {
     #[error("Failed to send event message: {source}")]
     SendMessage {
         #[source]
-        source: tokio::sync::broadcast::error::SendError<Event>,
+        source: Box<tokio::sync::broadcast::error::SendError<Event>>,
     },
     /// Event construction or processing failed.
     #[error(transparent)]
@@ -111,7 +111,7 @@ impl EventHandler {
 
             self.tx
                 .send_with_logging(e)
-                .map_err(|e| Error::SendMessage { source: e })?;
+                .map_err(|source| Error::SendMessage { source })?;
         }
 
         Ok(())

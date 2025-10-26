@@ -26,7 +26,7 @@ pub enum Error {
     #[error("Failed to send event message: {source}")]
     SendMessage {
         #[source]
-        source: tokio::sync::broadcast::error::SendError<Event>,
+        source: Box<tokio::sync::broadcast::error::SendError<Event>>,
     },
     /// Event construction or processing failed.
     #[error(transparent)]
@@ -52,6 +52,9 @@ pub enum Error {
     /// Required builder attribute was not provided.
     #[error("Missing required attribute: {}", _0)]
     MissingRequiredAttribute(String),
+    /// ArrowRecordBatch to Avro conversion is not supported directly.
+    #[error("ArrowRecordBatch to Avro conversion requires Json intermediate step")]
+    ArrowToAvroNotSupported,
     /// Host coordination error.
     #[error("Host coordination error")]
     Host(#[source] crate::host::Error),
@@ -134,10 +137,7 @@ impl EventHandler {
                     EventData::Json(json_value)
                 }
                 crate::task::convert::config::TargetFormat::Avro => {
-                    return Err(Error::MissingRequiredAttribute(
-                        "ArrowRecordBatch to Avro conversion requires Json intermediate step"
-                            .to_string(),
-                    ))
+                    return Err(Error::ArrowToAvroNotSupported)
                 }
             },
             EventData::Avro(avro_data) => match self.config.target_format {
@@ -179,7 +179,7 @@ impl EventHandler {
 
         self.tx
             .send_with_logging(e)
-            .map_err(|e| Error::SendMessage { source: e })?;
+            .map_err(|source| Error::SendMessage { source })?;
         Ok(())
     }
 }

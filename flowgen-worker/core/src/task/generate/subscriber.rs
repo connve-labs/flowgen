@@ -35,7 +35,7 @@ pub enum Error {
     #[error("Failed to send event message: {source}")]
     SendMessage {
         #[source]
-        source: tokio::sync::broadcast::error::SendError<Event>,
+        source: Box<tokio::sync::broadcast::error::SendError<Event>>,
     },
     /// Event construction failed.
     #[error(transparent)]
@@ -170,7 +170,7 @@ impl EventHandler {
                 .build()?;
             self.tx
                 .send_with_logging(e)
-                .map_err(|e| Error::SendMessage { source: e })?;
+                .map_err(|source| Error::SendMessage { source })?;
 
             // Update cache with current time after sending the event.
             let current_time = SystemTime::now()

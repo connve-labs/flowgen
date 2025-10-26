@@ -65,7 +65,7 @@ pub enum Error {
     #[error("Failed to send event message: {source}")]
     SendMessage {
         #[source]
-        source: tokio::sync::broadcast::error::SendError<Event>,
+        source: Box<tokio::sync::broadcast::error::SendError<Event>>,
     },
     /// Required configuration attribute is missing.
     #[error("Missing required attribute: {}.", _0)]
@@ -113,7 +113,7 @@ impl EventHandler {
 
                     self.tx
                         .send_with_logging(e)
-                        .map_err(|e| Error::SendMessage { source: e })?;
+                        .map_err(|source| Error::SendMessage { source })?;
                 }
             }
         }
@@ -392,11 +392,7 @@ mod tests {
     #[tokio::test]
     async fn test_subscriber_builder_build_missing_config() {
         let (tx, _rx) = broadcast::channel(100);
-        let result = SubscriberBuilder::new()
-            .sender(tx)
-            .task_id(1)
-            .build()
-            .await;
+        let result = SubscriberBuilder::new().sender(tx).task_id(1).build().await;
 
         assert!(result.is_err());
         assert!(

@@ -86,7 +86,7 @@ pub enum Error {
     #[error("Failed to send event message: {source}")]
     SendMessage {
         #[source]
-        source: tokio::sync::broadcast::error::SendError<Event>,
+        source: Box<tokio::sync::broadcast::error::SendError<Event>>,
     },
 }
 
@@ -186,7 +186,7 @@ impl EventHandler {
 
         self.tx
             .send_with_logging(e)
-            .map_err(|e| Error::SendMessage { source: e })?;
+            .map_err(|source| Error::SendMessage { source })?;
 
         Ok(())
     }
@@ -435,11 +435,7 @@ mod tests {
     #[tokio::test]
     async fn test_writer_builder_missing_config() {
         let (_, rx) = broadcast::channel::<Event>(10);
-        let result = WriterBuilder::new()
-            .receiver(rx)
-            .task_id(1)
-            .build()
-            .await;
+        let result = WriterBuilder::new().receiver(rx).task_id(1).build().await;
 
         assert!(result.is_err());
         assert!(
@@ -457,11 +453,7 @@ mod tests {
             hive_partition_options: None,
         });
 
-        let result = WriterBuilder::new()
-            .config(config)
-            .task_id(1)
-            .build()
-            .await;
+        let result = WriterBuilder::new().config(config).task_id(1).build().await;
 
         assert!(result.is_err());
         assert!(

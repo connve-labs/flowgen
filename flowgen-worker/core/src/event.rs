@@ -30,17 +30,17 @@ pub trait SenderExt {
     fn send_with_logging(
         &self,
         event: Event,
-    ) -> Result<usize, tokio::sync::broadcast::error::SendError<Event>>;
+    ) -> Result<usize, Box<tokio::sync::broadcast::error::SendError<Event>>>;
 }
 
 impl SenderExt for tokio::sync::broadcast::Sender<Event> {
     fn send_with_logging(
         &self,
         event: Event,
-    ) -> Result<usize, tokio::sync::broadcast::error::SendError<Event>> {
+    ) -> Result<usize, Box<tokio::sync::broadcast::error::SendError<Event>>> {
         let task_type = event.task_type;
         let subject = event.subject.clone();
-        let result = self.send(event)?;
+        let result = self.send(event).map_err(Box::new)?;
         info!("{}: [{}] {}", DEFAULT_LOG_MESSAGE, task_type, subject);
         Ok(result)
     }
