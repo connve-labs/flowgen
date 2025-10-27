@@ -538,6 +538,7 @@ mod tests {
             .sender(tx)
             .receiver(rx)
             .current_task_id(5)
+            .task_type("task_type")
             .build()
             .await;
 
@@ -560,6 +561,7 @@ mod tests {
             .sender(tx)
             .receiver(rx)
             .current_task_id(15)
+            .task_type("task_type")
             .build()
             .await;
 
@@ -581,11 +583,13 @@ mod tests {
             .sender(tx)
             .receiver(rx)
             .current_task_id(1)
+            .task_type("task_type")
             .build()
             .await;
 
         let result2 = ProcessorBuilder::new()
             .current_task_id(1)
+            .task_type("task_type")
             .receiver(rx2)
             .sender(tx2)
             .config(Arc::clone(&config))
@@ -755,6 +759,7 @@ mod tests {
             .sender(tx)
             .receiver(rx)
             .current_task_id(0)
+            .task_type("task_type")
             .build()
             .await;
 
@@ -777,6 +782,7 @@ mod tests {
             .sender(tx)
             .receiver(rx)
             .current_task_id(999999)
+            .task_type("task_type")
             .build()
             .await;
 
@@ -815,6 +821,7 @@ mod tests {
             .sender(tx1)
             .receiver(rx1)
             .current_task_id(1)
+            .task_type("task_type")
             .build()
             .await;
 
@@ -823,6 +830,7 @@ mod tests {
             .sender(tx2)
             .receiver(rx2)
             .current_task_id(2)
+            .task_type("task_type")
             .build()
             .await;
 
