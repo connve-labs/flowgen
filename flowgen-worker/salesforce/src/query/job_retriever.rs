@@ -867,6 +867,7 @@ mod integration_tests {
             .sender(tx)
             .receiver(rx)
             .current_task_id(100)
+            .task_type("task_type")
             .build()
             .await;
 
@@ -890,7 +891,8 @@ mod integration_tests {
             .config(Arc::clone(&config))
             .sender(tx.clone())
             .receiver(tx.subscribe())
-            .current_task_id(1);
+            .current_task_id(1)
+            .task_type("task_type");
 
         let result1 = builder.build().await;
         assert!(result1.is_ok());
