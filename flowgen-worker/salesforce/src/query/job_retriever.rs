@@ -903,6 +903,7 @@ mod integration_tests {
             .sender(tx)
             .receiver(rx)
             .current_task_id(2)
+            .task_type("task_type_2")
             .build()
             .await;
 
