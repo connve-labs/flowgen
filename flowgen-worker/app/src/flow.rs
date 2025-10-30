@@ -647,6 +647,7 @@ async fn spawn_tasks(
                 let rx = tx.subscribe();
                 let tx = tx.clone();
                 let span = tracing::Span::current();
+                let task_type = task.as_str();
                 let task: JoinHandle<Result<(), Error>> = tokio::spawn(
                     async move {
                         flowgen_salesforce::query::job_creator::ProcessorBuilder::new()
@@ -654,6 +655,7 @@ async fn spawn_tasks(
                             .receiver(rx)
                             .sender(tx)
                             .current_task_id(i)
+                            .task_type(task_type)
                             .build()
                             .await?
                             .run()
@@ -670,6 +672,7 @@ async fn spawn_tasks(
                 let rx = tx.subscribe();
                 let tx = tx.clone();
                 let span = tracing::Span::current();
+                let task_type = task.as_str();
                 let task: JoinHandle<Result<(), Error>> = tokio::spawn(
                     async move {
                         flowgen_salesforce::query::job_retriever::ProcessorBuilder::new()
@@ -677,6 +680,7 @@ async fn spawn_tasks(
                             .receiver(rx)
                             .sender(tx)
                             .current_task_id(i)
+                            .task_type(task_type)
                             .build()
                             .await?
                             .run()
