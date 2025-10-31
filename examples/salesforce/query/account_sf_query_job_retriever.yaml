@@ -16,6 +16,7 @@ flow:
         name: "account_salesforce_query_job_retrieve"
         label: "account_salesforce_query_job_retrieve"
         credentials_path: "/etc/sfdc/credentials.json"
+        job_type: "query"
     - nats_jetstream_publisher:
         name: "account_nats_jetstream_publisher_salesforce_query_job_retrieve"
         label: "account_nats_jetstream_publisher_salesforce_query_job_retrieve"

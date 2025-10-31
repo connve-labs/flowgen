@@ -11,6 +11,7 @@ flow:
         name: "account_salesforce_query_job"
         label: "account_salesforce_query_job"
         credentials_path: "/etc/sfdc/credentials.json"
+        job_type: "query"
         operation: "query"
         query: "SELECT Id, Name, CreatedDate, LastModifiedDate FROM Account WHERE SystemModstamp = LAST_N_DAYS:200"
         content_type: "CSV"
