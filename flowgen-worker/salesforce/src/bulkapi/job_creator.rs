@@ -321,8 +321,8 @@ mod tests {
 
     #[test]
     fn test_default_constants() {
-        assert_eq!(DEFAULT_MESSAGE_SUBJECT, "salesforce_query_job_create");
-        assert_eq!(DEFAULT_URI_PATH, "/services/data/v61.0/jobs/query");
+        assert_eq!(DEFAULT_MESSAGE_SUBJECT, "salesforce_job_create");
+        assert_eq!(DEFAULT_URI_PATH, "/services/data/v61.0/jobs/");
     }
 
     #[test]
@@ -600,7 +600,7 @@ mod tests {
 
         assert_eq!(
             subject,
-            "salesforce_query_job_create.test_label.1234567890123456"
+            "salesforce_job_create.test_label.1234567890123456"
         );
     }
 
@@ -619,7 +619,7 @@ mod tests {
             None => format!("{}.{}", DEFAULT_MESSAGE_SUBJECT, timestamp),
         };
 
-        assert_eq!(subject, "salesforce_query_job_create.1234567890123456");
+        assert_eq!(subject, "salesforce_job_create.1234567890123456");
     }
 
     #[test]
@@ -737,12 +737,12 @@ mod tests {
     fn test_uri_path_version() {
         assert!(DEFAULT_URI_PATH.contains("v61.0"));
         assert!(DEFAULT_URI_PATH.starts_with("/services/data/"));
-        assert!(DEFAULT_URI_PATH.ends_with("/jobs/query"));
+        assert!(DEFAULT_URI_PATH.ends_with("/jobs/"));
     }
 
     #[test]
     fn test_message_subject_format() {
-        assert_eq!(DEFAULT_MESSAGE_SUBJECT, "salesforce_query_job_create");
+        assert_eq!(DEFAULT_MESSAGE_SUBJECT, "salesforce_job_create");
         assert!(!DEFAULT_MESSAGE_SUBJECT.contains(" "));
         assert!(!DEFAULT_MESSAGE_SUBJECT.contains("."));
     }

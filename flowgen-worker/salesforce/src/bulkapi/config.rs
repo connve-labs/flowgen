@@ -548,6 +548,7 @@ mod tests {
             "name": "minimal_job",
             "credentials_path": "/creds.json",
             "operation": "insert",
+            "job_type": "query",
             "object": "Account"
         }"#;
 

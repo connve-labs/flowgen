@@ -379,7 +379,7 @@ mod tests {
     #[test]
     fn test_default_constants() {
         assert_eq!(DEFAULT_MESSAGE_SUBJECT, "salesforce_query_job_retrieve");
-        assert_eq!(DEFAULT_JOB_METADATA_URI, "/services/data/v61.0/jobs/query/");
+        assert_eq!(DEFAULT_JOB_METADATA_URI, "/services/data/v61.0/jobs/");
     }
 
     #[test]
@@ -639,7 +639,7 @@ mod tests {
     fn test_uri_path_version() {
         assert!(DEFAULT_JOB_METADATA_URI.contains("v61.0"));
         assert!(DEFAULT_JOB_METADATA_URI.starts_with("/services/data/"));
-        assert!(DEFAULT_JOB_METADATA_URI.ends_with("/jobs/query/"));
+        assert!(DEFAULT_JOB_METADATA_URI.ends_with("/jobs/"));
     }
 
     #[test]
@@ -810,7 +810,7 @@ mod tests {
     #[test]
     fn test_job_metadata_uri_construction() {
         let job_id = "750xx0000000001AAA";
-        let full_uri = format!("{}{}", DEFAULT_JOB_METADATA_URI, job_id);
+        let full_uri = format!("{}{}{}", DEFAULT_JOB_METADATA_URI,"query/", job_id);
         assert_eq!(
             full_uri,
             "/services/data/v61.0/jobs/query/750xx0000000001AAA"
