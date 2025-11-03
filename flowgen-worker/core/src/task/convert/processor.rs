@@ -17,42 +17,42 @@ use tracing::{error, Instrument};
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
 pub enum Error {
-    /// Failed to send converted event through broadcast channel.
-    #[error("Failed to send event message: {source}")]
+    #[error("Sending event to channel failed with error: {source}")]
     SendMessage {
         #[source]
         source: Box<tokio::sync::broadcast::error::SendError<Event>>,
     },
-    /// Event construction or processing failed.
-    #[error(transparent)]
-    Event(#[from] crate::event::Error),
-    /// Avro serialization failed.
-    #[error("Avro serialization failed: {source}")]
+    #[error("Processor event builder failed with error: {source}")]
+    EventBuilder {
+        #[source]
+        source: crate::event::Error,
+    },
+    #[error("ArrowRecordBatch to JSON conversion failed with error: {source}")]
+    ArrowToJson {
+        #[source]
+        source: crate::event::Error,
+    },
+    #[error(
+        "ArrowRecordBatch to Avro conversion is not supported. Please convert data to JSON first."
+    )]
+    ArrowToAvroNotSupported,
+    #[error("Avro serialization failed with error: {source}")]
     SerdeAvro {
         #[source]
         source: serde_avro_fast::ser::SerError,
     },
-    /// Avro deserialization failed.
-    #[error("Avro deserialization failed: {source}")]
+    #[error("Avro deserialization failed with error: {source}")]
     SerdeAvroDe {
         #[source]
         source: serde_avro_fast::de::DeError,
     },
-    /// Avro schema parsing failed.
-    #[error("Avro schema parsing failed: {source}")]
+    #[error("Avro schema parsing failed with error: {source}")]
     SerdeSchema {
         #[source]
         source: serde_avro_fast::schema::SchemaError,
     },
-    /// Required builder attribute was not provided.
-    #[error("Missing required attribute: {}", _0)]
+    #[error("Missing required builder attribute: {}", _0)]
     MissingRequiredAttribute(String),
-    /// ArrowRecordBatch to Avro conversion is not supported directly.
-    #[error("ArrowRecordBatch to Avro conversion requires Json intermediate step")]
-    ArrowToAvroNotSupported,
-    /// Host coordination error.
-    #[error("Host coordination error")]
-    Host(#[source] crate::host::Error),
 }
 
 /// Transforms JSON object keys by replacing hyphens with underscores.
@@ -115,7 +115,7 @@ impl EventHandler {
                         let mut serializer_config = serializer_opts.serializer_config.lock().await;
                         let raw_bytes: Vec<u8> =
                             serde_avro_fast::to_datum_vec(&data, &mut serializer_config)
-                                .map_err(|e| Error::SerdeAvro { source: e })?;
+                                .map_err(|source| Error::SerdeAvro { source })?;
 
                         EventData::Avro(AvroData {
                             schema: serializer_opts.schema_string.clone(),
@@ -128,8 +128,9 @@ impl EventHandler {
             },
             EventData::ArrowRecordBatch(ref _batch) => match self.config.target_format {
                 crate::task::convert::config::TargetFormat::Json => {
-                    let json_value = serde_json::Value::try_from(&event.data)?;
-                    EventData::Json(json_value)
+                    let value = serde_json::Value::try_from(&event.data)
+                        .map_err(|source| Error::ArrowToJson { source })?;
+                    EventData::Json(value)
                 }
                 crate::task::convert::config::TargetFormat::Avro => {
                     return Err(Error::ArrowToAvroNotSupported)
@@ -141,12 +142,12 @@ impl EventHandler {
                     let schema: serde_avro_fast::Schema = avro_data
                         .schema
                         .parse()
-                        .map_err(|e| Error::SerdeSchema { source: e })?;
+                        .map_err(|source| Error::SerdeSchema { source })?;
 
                     // Deserialize Avro bytes to JSON value
                     let json_value: Value =
                         serde_avro_fast::from_datum_slice(&avro_data.raw_bytes, &schema)
-                            .map_err(|e| Error::SerdeAvroDe { source: e })?;
+                            .map_err(|source| Error::SerdeAvroDe { source })?;
 
                     EventData::Json(json_value)
                 }
@@ -163,7 +164,8 @@ impl EventHandler {
             .subject(self.config.name.to_owned())
             .task_id(self.task_id)
             .task_type(self.task_type)
-            .build()?;
+            .build()
+            .map_err(|source| Error::EventBuilder { source })?;
 
         self.tx
             .send_with_logging(e)
@@ -210,7 +212,7 @@ impl crate::task::runner::Runner for Processor {
 
                 let schema: serde_avro_fast::Schema = schema_string
                     .parse()
-                    .map_err(|e| Error::SerdeSchema { source: e })?;
+                    .map_err(|source| Error::SerdeSchema { source })?;
 
                 // Leak the schema to get a 'static reference.
                 // This is intentional and safe in this context since the schema
@@ -450,7 +452,7 @@ mod tests {
         assert!(result
             .unwrap_err()
             .to_string()
-            .contains("Missing required attribute: config"));
+            .contains("Missing required builder attribute: config"));
     }
 
     #[tokio::test]
@@ -469,7 +471,7 @@ mod tests {
         assert!(result
             .unwrap_err()
             .to_string()
-            .contains("Missing required attribute: sender"));
+            .contains("Missing required builder attribute: sender"));
     }
 
     #[tokio::test]
@@ -488,7 +490,7 @@ mod tests {
         assert!(result
             .unwrap_err()
             .to_string()
-            .contains("Missing required attribute: receiver"));
+            .contains("Missing required builder attribute: receiver"));
     }
 
     #[test]
@@ -543,7 +545,7 @@ mod tests {
             }
             _ => panic!("Expected JSON passthrough"),
         }
-        assert!(output_event.subject.starts_with("test."));
+        assert_eq!(output_event.subject, "test");
         assert_eq!(output_event.task_id, 1);
     }
 
@@ -618,7 +620,7 @@ mod tests {
             }
             _ => panic!("Expected JSON output from Avro conversion"),
         }
-        assert!(output_event.subject.starts_with("test."));
+        assert_eq!(output_event.subject, "test");
         assert_eq!(output_event.task_id, 1);
     }
 
@@ -669,7 +671,7 @@ mod tests {
             }
             _ => panic!("Expected Avro passthrough"),
         }
-        assert!(output_event.subject.starts_with("test."));
+        assert_eq!(output_event.subject, "test");
         assert_eq!(output_event.task_id, 1);
     }
 }

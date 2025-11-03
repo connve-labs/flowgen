@@ -3,10 +3,11 @@ use bytes::Bytes;
 use chrono::{DateTime, Datelike, Utc};
 use flowgen_core::buffer::ToWriter;
 use flowgen_core::client::Client;
+use flowgen_core::config::ConfigExt;
 use flowgen_core::event::{Event, EventBuilder, EventData, SenderExt};
 use object_store::PutPayload;
 use serde::{Deserialize, Serialize};
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 use tokio::sync::{broadcast::Receiver, Mutex};
 use tracing::{error, Instrument};
 
@@ -70,6 +71,11 @@ pub enum Error {
     /// Event building or processing error.
     #[error(transparent)]
     Event(#[from] flowgen_core::event::Error),
+    /// Event building error.
+    /// Configuration template rendering failed.
+    #[error(transparent)]
+    ConfigRender(#[from] flowgen_core::config::Error),
+
     /// Missing required attribute.
     #[error("Missing required attribute: {0}")]
     MissingRequiredAttribute(String),
@@ -114,7 +120,10 @@ impl EventHandler {
             .as_mut()
             .ok_or_else(Error::NoObjectStoreContext)?;
 
-        let mut path = PathBuf::from(context.path.to_string());
+        // Render config with to support templates inside configuration.
+        let event_value = serde_json::value::Value::try_from(&event)?;
+        let config = self.config.render(&event_value)?;
+        let mut path = config.path;
 
         let cd = Utc::now();
         if let Some(hive_options) = &self.config.hive_partition_options {

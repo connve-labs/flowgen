@@ -1,6 +1,7 @@
 use super::config::{DEFAULT_AVRO_EXTENSION, DEFAULT_CSV_EXTENSION, DEFAULT_JSON_EXTENSION};
 use bytes::{Bytes, BytesMut};
 use flowgen_core::buffer::{ContentType, FromReader};
+use flowgen_core::config::ConfigExt;
 use flowgen_core::event::{Event, EventBuilder, SenderExt};
 use flowgen_core::{client::Client, event::EventData};
 use futures::StreamExt;
@@ -112,9 +113,14 @@ impl EventHandler {
             .as_mut()
             .ok_or_else(Error::NoObjectStoreContext)?;
 
+        // Render config with to support templates inside configuration.
+        let event_value = serde_json::value::Value::try_from(&event)?;
+        let config = self.config.render(&event_value)?;
+        let path = object_store::path::Path::from(format!("{}", config.path.to_string_lossy(),));
+
         let result = context
             .object_store
-            .get(&context.path)
+            .get(&path)
             .await
             .map_err(|e| Error::ObjectStore { source: e })?;
 
