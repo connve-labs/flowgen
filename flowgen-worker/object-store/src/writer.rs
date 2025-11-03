@@ -85,6 +85,11 @@ pub enum Error {
         #[source]
         source: flowgen_core::host::Error,
     },
+    #[error("Invalid URL format with error: {source}")]
+    ParseUrl {
+        #[source]
+        source: url::ParseError,
+    },
     #[error("Could not initialize object store context")]
     NoObjectStoreContext,
     #[error("Missing required builder attribute: {0}")]
@@ -125,7 +130,11 @@ impl EventHandler {
             .config
             .render(&event_value)
             .map_err(|source| Error::ConfigRender { source })?;
-        let mut path = config.path;
+
+        // Parse the rendered path to extract just the path part (not the URL scheme/bucket)
+        let config_path_str = config.path.to_string_lossy();
+        let url = url::Url::parse(&config_path_str).map_err(|source| Error::ParseUrl { source })?;
+        let mut path = object_store::path::Path::from(url.path());
 
         let cd = Utc::now();
         if let Some(hive_options) = &self.config.hive_partition_options {
@@ -134,20 +143,22 @@ impl EventHandler {
                     match partition_key {
                         crate::config::HiveParitionKeys::EventDate => {
                             let date_partition = self.format_date_partition(&cd);
-                            path.push(date_partition);
+                            // Split the date partition by '/' and add each part as a child
+                            for part in date_partition.split('/') {
+                                path = path.child(part);
+                            }
                         }
                     }
                 }
             }
         }
+
         let timestamp = cd.timestamp_micros();
         let filename = match event.id {
             Some(id) => id,
             _none => timestamp.to_string(),
         };
-        path.push(&filename);
 
-        let mut writer = Vec::new();
         let extension = match &event.data {
             flowgen_core::event::EventData::ArrowRecordBatch(_) => DEFAULT_CSV_EXTENSION,
             flowgen_core::event::EventData::Avro(_) => DEFAULT_AVRO_EXTENSION,
@@ -155,13 +166,13 @@ impl EventHandler {
         };
 
         // Transform the event data to writer.
+        let mut writer = Vec::new();
         event
             .data
             .to_writer(&mut writer)
             .map_err(|source| Error::EventBuilder { source })?;
 
-        let object_path =
-            object_store::path::Path::from(format!("{}.{}", path.to_string_lossy(), extension));
+        let object_path = path.child(format!("{filename}.{extension}"));
 
         // Upload processed data to object store.
         let payload = PutPayload::from_bytes(Bytes::from(writer));

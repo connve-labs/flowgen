@@ -1,6 +1,6 @@
 use flowgen_core::{
     client::Client,
-    event::{generate_subject, AvroData, Event, EventBuilder, EventData, SenderExt, SubjectSuffix},
+    event::{AvroData, Event, EventBuilder, EventData, SenderExt},
 };
 use salesforce_pubsub_v1::eventbus::v1::{FetchRequest, SchemaRequest, TopicRequest};
 use std::sync::Arc;
@@ -204,18 +204,11 @@ impl EventHandler {
                             };
 
                             // Normalize topic name by removing data/ or event/ prefix and keeping the object name.
-                            let topic = topic_name
+                            let subject = topic_name
                                 .strip_prefix(DEFAULT_TOPIC_PREFIX_DATA)
                                 .or_else(|| topic_name.strip_prefix(DEFAULT_TOPIC_PREFIX_EVENT))
                                 .unwrap_or(topic_name)
                                 .to_lowercase();
-
-                            // Use the topic object name as subject prefix.
-                            let subject_prefix = topic;
-                            let subject = generate_subject(
-                                &subject_prefix,
-                                Some(SubjectSuffix::Id(&event.id)),
-                            );
 
                             // Build and send event.
                             let e = EventBuilder::new()

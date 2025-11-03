@@ -78,6 +78,11 @@ pub enum Error {
         #[source]
         source: flowgen_core::host::Error,
     },
+    #[error("Invalid URL format with error: {source}")]
+    ParseUrl {
+        #[source]
+        source: url::ParseError,
+    },
     #[error("Missing required builder attribute: {}", _0)]
     MissingRequiredAttribute(String),
 }
@@ -118,7 +123,11 @@ impl EventHandler {
             .config
             .render(&event_value)
             .map_err(|source| Error::ConfigRender { source })?;
-        let path = object_store::path::Path::from(format!("{}", config.path.to_string_lossy(),));
+
+        // Parse the rendered path to extract just the path part (not the URL scheme/bucket)
+        let config_path_str = config.path.to_string_lossy();
+        let url = url::Url::parse(&config_path_str).map_err(|source| Error::ParseUrl { source })?;
+        let path = object_store::path::Path::from(url.path());
 
         let result = context
             .object_store
