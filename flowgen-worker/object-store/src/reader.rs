@@ -22,66 +22,64 @@ const DEFAULT_HAS_HEADER: bool = true;
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
 pub enum Error {
-    /// Input/output operation failed.
-    #[error("IO operation failed: {source}")]
-    IO {
-        #[source]
-        source: std::io::Error,
-    },
-    /// Apache Arrow error.
-    #[error("Arrow operation failed: {source}")]
-    Arrow {
-        #[source]
-        source: arrow::error::ArrowError,
-    },
-    /// Apache Avro error.
-    #[error("Avro operation failed: {source}")]
-    Avro {
-        #[source]
-        source: apache_avro::Error,
-    },
-    /// JSON serialization/deserialization error.
-    #[error("JSON serialization/deserialization failed: {source}")]
-    SerdeJson {
-        #[source]
-        source: serde_json::Error,
-    },
-    /// Object store operation error.
-    #[error("Object store operation failed: {source}")]
-    ObjectStore {
-        #[source]
-        source: object_store::Error,
-    },
-    /// Object store client error.
-    #[error(transparent)]
-    ObjectStoreClient(#[from] super::client::Error),
-    /// Event building or processing error.
-    #[error(transparent)]
-    Event(#[from] flowgen_core::event::Error),
-    /// Failed to send event message.
-    #[error("Failed to send event message: {source}")]
+    #[error("Sending event to channel failed with error: {source}")]
     SendMessage {
         #[source]
         source: Box<tokio::sync::broadcast::error::SendError<Event>>,
     },
-    /// Configuration template rendering error.
-    #[error(transparent)]
-    ConfigRender(#[from] flowgen_core::config::Error),
-    /// Missing required attribute.
-    #[error("Missing required attribute: {}", _0)]
-    MissingRequiredAttribute(String),
-    /// Could not initialize object store context.
+    #[error("Reader event builder failed with error: {source}")]
+    EventBuilder {
+        #[source]
+        source: flowgen_core::event::Error,
+    },
+    #[error("IO operation failed with error: {source}")]
+    IO {
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("Arrow operation failed with error: {source}")]
+    Arrow {
+        #[source]
+        source: arrow::error::ArrowError,
+    },
+    #[error("Avro operation failed with error: {source}")]
+    Avro {
+        #[source]
+        source: apache_avro::Error,
+    },
+    #[error("JSON serialization/deserialization failed with error: {source}")]
+    SerdeJson {
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("Object store operation failed with error: {source}")]
+    ObjectStore {
+        #[source]
+        source: object_store::Error,
+    },
+    #[error("Object store client failed with error: {source}")]
+    ObjectStoreClient {
+        #[source]
+        source: super::client::Error,
+    },
+    #[error("Configuration template rendering failed with error: {source}")]
+    ConfigRender {
+        #[source]
+        source: flowgen_core::config::Error,
+    },
     #[error("Could not initialize object store context")]
-    NoObjectStoreContext(),
-    /// Could not retrieve file extension.
+    NoObjectStoreContext,
     #[error("Could not retrieve file extension")]
-    NoFileExtension(),
-    /// Cache error.
+    NoFileExtension,
     #[error("Cache error")]
-    Cache(),
-    /// Host coordination error.
-    #[error(transparent)]
-    Host(#[from] flowgen_core::host::Error),
+    Cache,
+    #[error("Host coordination failed with error: {source}")]
+    Host {
+        #[source]
+        source: flowgen_core::host::Error,
+    },
+    #[error("Missing required builder attribute: {}", _0)]
+    MissingRequiredAttribute(String),
 }
 
 /// Handles processing of individual events by writing them to object storage.
@@ -111,11 +109,15 @@ impl EventHandler {
         let context = client_guard
             .context
             .as_mut()
-            .ok_or_else(Error::NoObjectStoreContext)?;
+            .ok_or_else(|| Error::NoObjectStoreContext)?;
 
         // Render config with to support templates inside configuration.
-        let event_value = serde_json::value::Value::try_from(&event)?;
-        let config = self.config.render(&event_value)?;
+        let event_value = serde_json::value::Value::try_from(&event)
+            .map_err(|source| Error::EventBuilder { source })?;
+        let config = self
+            .config
+            .render(&event_value)
+            .map_err(|source| Error::ConfigRender { source })?;
         let path = object_store::path::Path::from(format!("{}", config.path.to_string_lossy(),));
 
         let result = context
@@ -128,7 +130,7 @@ impl EventHandler {
             .meta
             .location
             .extension()
-            .ok_or_else(Error::NoFileExtension)?;
+            .ok_or_else(|| Error::NoFileExtension)?;
 
         // Determine content type from file extension.
         let content_type = match extension {
@@ -158,7 +160,8 @@ impl EventHandler {
         let event_data_list = match result.payload {
             GetResultPayload::File(file, _) => {
                 let reader = BufReader::new(file);
-                EventData::from_reader(reader, content_type.clone())?
+                EventData::from_reader(reader, content_type.clone())
+                    .map_err(|source| Error::EventBuilder { source })?
             }
             GetResultPayload::Stream(mut stream) => {
                 // Collect stream into bytes.
@@ -172,7 +175,8 @@ impl EventHandler {
                 // Parse bytes using Cursor for Seek support.
                 let cursor = Cursor::new(bytes);
                 let reader = BufReader::new(cursor);
-                EventData::from_reader(reader, content_type.clone())?
+                EventData::from_reader(reader, content_type.clone())
+                    .map_err(|source| Error::EventBuilder { source })?
             }
         };
 
@@ -186,7 +190,7 @@ impl EventHandler {
                             cache
                                 .put(insert_key.as_str(), schema_bytes)
                                 .await
-                                .map_err(|_| Error::Cache())?;
+                                .map_err(|_| Error::Cache)?;
                         }
                     }
                 }
@@ -200,7 +204,8 @@ impl EventHandler {
                 .data(event_data)
                 .task_id(self.task_id)
                 .task_type(self.task_type)
-                .build()?;
+                .build()
+                .map_err(|source| Error::EventBuilder { source })?;
 
             self.tx
                 .send_with_logging(e)
@@ -258,7 +263,14 @@ impl flowgen_core::task::runner::Runner for Reader {
             client_builder = client_builder.credentials_path(credentials_path.clone());
         }
 
-        let client = Arc::new(Mutex::new(client_builder.build()?.connect().await?));
+        let client = Arc::new(Mutex::new(
+            client_builder
+                .build()
+                .map_err(|source| Error::ObjectStoreClient { source })?
+                .connect()
+                .await
+                .map_err(|source| Error::ObjectStoreClient { source })?,
+        ));
 
         let event_handler = EventHandler {
             client,

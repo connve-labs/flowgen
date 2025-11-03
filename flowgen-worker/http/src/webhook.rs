@@ -24,49 +24,45 @@ const DEFAULT_PAYLOAD_KEY: &str = "payload";
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
 pub enum Error {
-    /// Failed to send event message.
-    #[error("Failed to send event message: {source}")]
+    #[error("Sending event to channel failed with error: {source}")]
     SendMessage {
         #[source]
         source: Box<tokio::sync::broadcast::error::SendError<Event>>,
     },
-    /// Event building or processing failed.
-    #[error(transparent)]
-    Event(#[from] flowgen_core::event::Error),
-    /// JSON serialization/deserialization failed.
-    #[error("JSON serialization/deserialization failed: {source}")]
+    #[error("Webhook event builder failed with error: {source}")]
+    EventBuilder {
+        #[source]
+        source: flowgen_core::event::Error,
+    },
+    #[error("JSON serialization/deserialization failed with error: {source}")]
     SerdeJson {
         #[source]
         source: serde_json::Error,
     },
-    /// Axum HTTP processing failed.
-    #[error("Axum HTTP processing failed: {source}")]
+    #[error("Axum HTTP processing failed with error: {source}")]
     Axum {
         #[source]
         source: axum::Error,
     },
-    /// Authentication failed - no credentials provided.
-    #[error("No authorization header provided")]
-    NoCredentials,
-    /// Authentication failed - invalid credentials.
-    #[error("Invalid authorization credentials")]
-    InvalidCredentials,
-    /// Authentication failed - malformed authorization header.
-    #[error("Malformed authorization header")]
-    MalformedCredentials,
-    /// Failed to read credentials file.
-    #[error("Failed to read credentials file at {path}: {source}")]
+    #[error("Failed to read credentials file at {path} with error: {source}")]
     ReadCredentials {
         path: std::path::PathBuf,
         #[source]
         source: std::io::Error,
     },
-    /// Required configuration attribute is missing.
-    #[error("Missing required attribute: {}", _0)]
+    #[error("Task manager failed with error: {source}")]
+    TaskManager {
+        #[source]
+        source: flowgen_core::task::manager::Error,
+    },
+    #[error("No authorization header provided")]
+    NoCredentials,
+    #[error("Invalid authorization credentials")]
+    InvalidCredentials,
+    #[error("Malformed authorization header")]
+    MalformedCredentials,
+    #[error("Missing required builder attribute: {}", _0)]
     MissingRequiredAttribute(String),
-    /// Task manager error.
-    #[error(transparent)]
-    TaskManager(#[from] flowgen_core::task::manager::Error),
 }
 
 impl IntoResponse for Error {
@@ -195,7 +191,8 @@ impl EventHandler {
             .subject(subject)
             .task_id(self.task_id)
             .task_type(self.task_type)
-            .build()?;
+            .build()
+            .map_err(|source| Error::EventBuilder { source })?;
 
         self.tx
             .send_with_logging(e)

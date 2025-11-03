@@ -13,30 +13,26 @@ use tracing::{error, Instrument};
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
 pub enum Error {
-    /// Failed to send event through broadcast channel.
-    #[error("Failed to send event message: {source}")]
+    #[error("Sending event to channel failed with error: {source}")]
     SendMessage {
         #[source]
         source: Box<tokio::sync::broadcast::error::SendError<Event>>,
     },
-    /// Event construction or processing failed.
-    #[error(transparent)]
-    Event(#[from] crate::event::Error),
-    /// Required builder attribute was not provided.
-    #[error("Missing required attribute: {}", _0)]
-    MissingRequiredAttribute(String),
-    /// Expected array but got different type.
+    #[error("Processor event builder failed with error: {source}")]
+    EventBuilder {
+        #[source]
+        source: crate::event::Error,
+    },
     #[error("Expected array at key '{key}', got: {got}")]
     ExpectedArray { key: String, got: String },
-    /// Key not found in JSON object.
     #[error("Key '{}' not found in JSON object", _0)]
     KeyNotFound(String),
-    /// Expected JSON event data but received ArrowRecordBatch.
     #[error("Expected JSON event data, got ArrowRecordBatch")]
     ExpectedJsonGotArrowRecordBatch,
-    /// Expected JSON event data but received Avro.
     #[error("Expected JSON event data, got Avro")]
     ExpectedJsonGotAvro,
+    #[error("Missing required builder attribute: {}", _0)]
+    MissingRequiredAttribute(String),
 }
 
 /// Handles individual event processing by iterating over JSON arrays.
@@ -98,7 +94,8 @@ impl EventHandler {
                 .subject(self.config.name.to_owned())
                 .task_id(self.task_id)
                 .task_type(self.task_type)
-                .build()?;
+                .build()
+                .map_err(|source| Error::EventBuilder { source })?;
 
             self.tx
                 .send_with_logging(e)
@@ -318,10 +315,9 @@ mod tests {
             .await;
 
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Missing required attribute: config"));
+        assert!(
+            matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "config")
+        );
     }
 
     #[tokio::test]

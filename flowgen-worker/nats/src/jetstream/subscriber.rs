@@ -15,67 +15,60 @@ const DEFAULT_BATCH_SIZE: usize = 100;
 /// Errors that can occur during NATS JetStream subscription operations.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    /// Client authentication or connection error.
-    #[error(transparent)]
-    Client(#[from] crate::client::Error),
-    /// Error converting message to flowgen event format.
-    #[error(transparent)]
-    MessageConversion(#[from] crate::jetstream::message::Error),
-    /// JetStream consumer operation error.
-    #[error("JetStream consumer operation failed: {source}")]
+    #[error("Sending event to channel failed with error: {source}")]
+    SendMessage {
+        #[source]
+        source: Box<tokio::sync::broadcast::error::SendError<Event>>,
+    },
+    #[error("NATS client failed with error: {source}")]
+    Client {
+        #[source]
+        source: crate::client::Error,
+    },
+    #[error("Message conversion failed with error: {source}")]
+    MessageConversion {
+        #[source]
+        source: crate::jetstream::message::Error,
+    },
+    #[error("JetStream consumer operation failed with error: {source}")]
     Consumer {
         #[source]
         source: async_nats::jetstream::stream::ConsumerError,
     },
-    /// JetStream consumer stream error.
-    #[error("JetStream consumer stream error: {source}")]
+    #[error("JetStream consumer stream failed with error: {source}")]
     ConsumerStream {
         #[source]
         source: async_nats::jetstream::consumer::StreamError,
     },
-    /// Stream management error.
-    #[error(transparent)]
-    Stream(#[from] super::stream::Error),
-    /// Failed to retrieve consumer configuration information.
+    #[error("JetStream stream management failed with error: {source}")]
+    StreamManagement {
+        #[source]
+        source: super::stream::Error,
+    },
+    #[error("Failed to get JetStream stream with error: {source}")]
+    GetStream {
+        #[source]
+        source: async_nats::jetstream::context::GetStreamError,
+    },
+    #[error("Failed to subscribe to NATS subject with error: {source}")]
+    Subscribe {
+        #[source]
+        source: async_nats::SubscribeError,
+    },
     #[error("Consumer configuration check failed")]
     ConsumerInfoFailed,
-    /// Consumer exists with conflicting filter subject configuration.
     #[error("Consumer '{consumer}' exists with different filter subject '{existing}', expected '{expected}'. Please delete the existing consumer or use a different durable name")]
     ConsumerFilterMismatch {
         consumer: String,
         existing: String,
         expected: String,
     },
-    /// Failed to subscribe to NATS subject.
-    #[error("Failed to subscribe to NATS subject: {source}")]
-    Subscribe {
-        #[source]
-        source: async_nats::SubscribeError,
-    },
-    /// Async task join error.
-    #[error("Task join error: {source}")]
-    TaskJoin {
-        #[source]
-        source: tokio::task::JoinError,
-    },
-    /// Failed to send event through broadcast channel.
-    #[error("Failed to send event message: {source}")]
-    SendMessage {
-        #[source]
-        source: Box<tokio::sync::broadcast::error::SendError<Event>>,
-    },
-    /// Required configuration attribute is missing.
-    #[error("Missing required attribute: {}.", _0)]
-    MissingRequiredAttribute(String),
-    /// Stream configuration is missing.
-    #[error("Stream configuration is missing")]
-    NoStream,
-    /// General subscriber error for wrapped external errors.
-    #[error("Other error with subscriber")]
+    #[error("Missing stream configuration")]
+    MissingStreamConfig,
+    #[error("Other subscriber error")]
     Other(#[source] Box<dyn std::error::Error + Send + Sync>),
-    /// Host coordination error.
-    #[error(transparent)]
-    Host(#[from] flowgen_core::host::Error),
+    #[error("Missing required builder attribute: {}", _0)]
+    MissingRequiredAttribute(String),
 }
 
 /// Event handler for processing NATS messages.
@@ -105,7 +98,9 @@ impl EventHandler {
 
             while let Some(message) = batch.next().await {
                 if let Ok(message) = message {
-                    let e = message.to_event(self.task_type, self.task_id)?;
+                    let e = message
+                        .to_event(self.task_type, self.task_id)
+                        .map_err(|source| Error::MessageConversion { source })?;
                     message.ack().await.ok();
 
                     self.tx
@@ -146,22 +141,30 @@ impl flowgen_core::task::runner::Runner for Subscriber {
     async fn init(&self) -> Result<EventHandler, Error> {
         let client = crate::client::ClientBuilder::new()
             .credentials_path(self.config.credentials_path.clone())
-            .build()?
+            .build()
+            .map_err(|source| Error::Client { source })?
             .connect()
-            .await?;
+            .await
+            .map_err(|source| Error::Client { source })?;
 
         if let Some(jetstream) = client.jetstream {
-            let stream_opts = self.config.stream.as_ref().ok_or_else(|| Error::NoStream)?;
+            let stream_opts = self
+                .config
+                .stream
+                .as_ref()
+                .ok_or_else(|| Error::MissingStreamConfig)?;
 
             let jetstream = match stream_opts.create_or_update {
-                true => super::stream::create_or_update_stream(jetstream, stream_opts).await?,
+                true => super::stream::create_or_update_stream(jetstream, stream_opts)
+                    .await
+                    .map_err(|source| Error::StreamManagement { source })?,
                 false => jetstream,
             };
 
             let stream = jetstream
                 .get_stream(&stream_opts.name)
                 .await
-                .map_err(|e| super::stream::Error::GetStream { source: e })?;
+                .map_err(|source| Error::GetStream { source })?;
 
             let durable_name = self
                 .config
@@ -533,16 +536,14 @@ mod tests {
         let consumer_err = Error::MissingRequiredAttribute("test".to_string());
         assert!(consumer_err
             .to_string()
-            .contains("Missing required attribute"));
+            .contains("Missing required builder attribute"));
 
         // Test error display for comprehensive coverage
         let other_err = Error::Other(Box::new(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             "test",
         )));
-        assert!(other_err
-            .to_string()
-            .contains("Other error with subscriber"));
+        assert!(other_err.to_string().contains("Other subscriber error"));
 
         // Test consumer filter mismatch error
         let filter_err = Error::ConsumerFilterMismatch {

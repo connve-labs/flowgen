@@ -22,61 +22,58 @@ use tracing::{error, Instrument};
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
 pub enum Error {
-    /// Failed to read credentials file.
-    #[error("Failed to read credentials file at {path}: {source}")]
+    #[error("Sending event to channel failed with error: {source}")]
+    SendMessage {
+        #[source]
+        source: Box<tokio::sync::broadcast::error::SendError<Event>>,
+    },
+    #[error("Request event builder failed with error: {source}")]
+    EventBuilder {
+        #[source]
+        source: flowgen_core::event::Error,
+    },
+    #[error("Failed to read credentials file at {path} with error: {source}")]
     ReadCredentials {
         path: std::path::PathBuf,
         #[source]
         source: std::io::Error,
     },
-    /// Failed to send event message.
-    #[error("Failed to send event message: {source}")]
-    SendMessage {
-        #[source]
-        source: Box<tokio::sync::broadcast::error::SendError<Event>>,
-    },
-    /// Event building or processing failed.
-    #[error(transparent)]
-    Event(#[from] flowgen_core::event::Error),
-    /// JSON serialization/deserialization failed.
-    #[error("JSON serialization/deserialization failed: {source}")]
+    #[error("JSON serialization/deserialization failed with error: {source}")]
     SerdeJson {
         #[source]
         source: serde_json::Error,
     },
-    /// Configuration template rendering failed.
-    #[error(transparent)]
-    ConfigRender(#[from] flowgen_core::config::Error),
-    /// HTTP request failed.
-    #[error("HTTP request failed: {source}. This may be caused by invalid headers, malformed URL, unsupported request body format, or network issues")]
+    #[error("Configuration template rendering failed with error: {source}")]
+    ConfigRender {
+        #[source]
+        source: flowgen_core::config::Error,
+    },
+    #[error("HTTP request failed with error: {source}. This may be caused by invalid headers, malformed URL, unsupported request body format, or network issues")]
     Reqwest {
         #[source]
         source: reqwest::Error,
     },
-    /// Invalid HTTP header name.
-    #[error("Invalid HTTP header name: {source}")]
+    #[error("Invalid HTTP header name with error: {source}")]
     ReqwestInvalidHeaderName {
         #[source]
         source: reqwest::header::InvalidHeaderName,
     },
-    /// Invalid HTTP header value.
-    #[error("Invalid HTTP header value: {source}")]
+    #[error("Invalid HTTP header value with error: {source}")]
     ReqwestInvalidHeaderValue {
         #[source]
         source: reqwest::header::InvalidHeaderValue,
     },
-    /// Required configuration attribute is missing.
-    #[error("Missing required attribute: {}", _0)]
-    MissingRequiredAttribute(String),
-    /// Payload configuration is invalid.
+    #[error("Host coordination failed with error: {source}")]
+    Host {
+        #[source]
+        source: flowgen_core::host::Error,
+    },
     #[error("Either payload json or payload input is required")]
-    PayloadConfig(),
-    /// Host coordination error.
-    #[error(transparent)]
-    Host(#[from] flowgen_core::host::Error),
-    /// Expected event data but found null.
+    PayloadConfig,
     #[error("No event data available on the event")]
     NoEventData,
+    #[error("Missing required builder attribute: {}", _0)]
+    MissingRequiredAttribute(String),
 }
 
 /// Event handler for processing HTTP requests.
@@ -104,8 +101,12 @@ impl EventHandler {
         }
 
         // Render config with to support templates inside configuration.
-        let event_value = serde_json::value::Value::try_from(&event)?;
-        let config = self.config.render(&event_value)?;
+        let event_value = serde_json::value::Value::try_from(&event)
+            .map_err(|source| Error::EventBuilder { source })?;
+        let config = self
+            .config
+            .render(&event_value)
+            .map_err(|source| Error::ConfigRender { source })?;
 
         let mut client = match config.method {
             crate::config::Method::GET => self.client.get(config.endpoint),
@@ -120,9 +121,9 @@ impl EventHandler {
             let mut header_map = HeaderMap::new();
             for (key, value) in headers {
                 let header_name = HeaderName::try_from(key)
-                    .map_err(|e| Error::ReqwestInvalidHeaderName { source: e })?;
+                    .map_err(|source| Error::ReqwestInvalidHeaderName { source })?;
                 let header_value = HeaderValue::try_from(value)
-                    .map_err(|e| Error::ReqwestInvalidHeaderValue { source: e })?;
+                    .map_err(|source| Error::ReqwestInvalidHeaderValue { source })?;
                 header_map.insert(header_name, header_value);
             }
             client = client.headers(header_map);
@@ -136,8 +137,8 @@ impl EventHandler {
                     Some(obj) => Value::Object(obj.to_owned()),
                     None => match &payload.input {
                         Some(input) => serde_json::from_str::<serde_json::Value>(input.as_str())
-                            .map_err(|e| Error::SerdeJson { source: e })?,
-                        None => return Err(Error::PayloadConfig()),
+                            .map_err(|source| Error::SerdeJson { source })?,
+                        None => return Err(Error::PayloadConfig),
                     },
                 }
             };
@@ -158,7 +159,7 @@ impl EventHandler {
                         source: e,
                     })?;
             let credentials: Credentials = serde_json::from_str(&credentials_string)
-                .map_err(|e| Error::SerdeJson { source: e })?;
+                .map_err(|source| Error::SerdeJson { source })?;
 
             if let Some(bearer_token) = credentials.bearer_auth {
                 client = client.bearer_auth(bearer_token);
@@ -172,10 +173,10 @@ impl EventHandler {
         let resp = client
             .send()
             .await
-            .map_err(|e| Error::Reqwest { source: e })?
+            .map_err(|source| Error::Reqwest { source })?
             .text()
             .await
-            .map_err(|e| Error::Reqwest { source: e })?;
+            .map_err(|source| Error::Reqwest { source })?;
 
         let data = serde_json::from_str::<Value>(&resp).unwrap_or_else(|_| json!(resp));
         let subject = generate_subject(&self.config.name, Some(SubjectSuffix::Timestamp));
@@ -184,7 +185,8 @@ impl EventHandler {
             .subject(subject.clone())
             .task_id(self.task_id)
             .task_type(self.task_type)
-            .build()?;
+            .build()
+            .map_err(|source| Error::EventBuilder { source })?;
 
         self.tx
             .send_with_logging(e)

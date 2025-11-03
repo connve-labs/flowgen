@@ -12,15 +12,13 @@ const DEFAULT_MESSAGE_SUBJECT: &str = "log";
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
 pub enum Error {
-    /// Required builder attribute was not provided.
-    #[error("Missing required attribute: {}", _0)]
-    MissingRequiredAttribute(String),
-    /// Failed to send event through channel.
-    #[error("Failed to send event message: {source}")]
+    #[error("Sending event to channel failed with error: {source}")]
     SendMessage {
         #[source]
         source: Box<tokio::sync::broadcast::error::SendError<Event>>,
     },
+    #[error("Missing required builder attribute: {}", _0)]
+    MissingRequiredAttribute(String),
 }
 
 /// Handles individual log operations.
@@ -324,10 +322,9 @@ mod tests {
             .await;
 
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Missing required attribute: config"));
+        assert!(
+            matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "config")
+        );
     }
 
     #[tokio::test]

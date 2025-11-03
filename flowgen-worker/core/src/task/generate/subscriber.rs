@@ -28,30 +28,25 @@ pub struct SystemInfo {
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
 pub enum Error {
-    /// Failed to send event through broadcast channel.
-    #[error("Failed to send event message: {source}")]
+    #[error("Sending event to channel failed with error: {source}")]
     SendMessage {
         #[source]
         source: Box<tokio::sync::broadcast::error::SendError<Event>>,
     },
-    /// Event construction failed.
-    #[error(transparent)]
-    Event(#[from] crate::event::Error),
-    /// Required builder attribute was not provided.
-    #[error("Missing required attribute: {}", _0)]
-    MissingRequiredAttribute(String),
-    /// Cache operation error with descriptive message.
-    #[error("Cache error: {_0}")]
+    #[error("Subscriber event builder failed with error: {source}")]
+    EventBuilder {
+        #[source]
+        source: crate::event::Error,
+    },
+    #[error("Cache operation failed with error: {_0}")]
     Cache(String),
-    /// System time error when getting current timestamp.
     #[error("System time error: {source}")]
     SystemTime {
         #[source]
         source: std::time::SystemTimeError,
     },
-    /// Host coordination error.
-    #[error("Host coordination error")]
-    Host(#[source] crate::host::Error),
+    #[error("Missing required builder attribute: {}", _0)]
+    MissingRequiredAttribute(String),
 }
 /// Event handler for generating scheduled events.
 pub struct EventHandler {
@@ -158,7 +153,8 @@ impl EventHandler {
                 .subject(self.config.name.to_owned())
                 .task_id(self.task_id)
                 .task_type(self.task_type)
-                .build()?;
+                .build()
+                .map_err(|source| Error::EventBuilder { source })?;
             self.tx
                 .send_with_logging(e)
                 .map_err(|source| Error::SendMessage { source })?;
@@ -422,10 +418,9 @@ mod tests {
             .await;
 
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Missing required attribute: config"));
+        assert!(
+            matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "config")
+        );
     }
 
     #[tokio::test]
@@ -439,10 +434,9 @@ mod tests {
             .await;
 
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Missing required attribute: sender"));
+        assert!(
+            matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "sender")
+        );
     }
 
     #[tokio::test]
