@@ -4,24 +4,20 @@ use url::Url;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    /// Invalid URL format for object store path.
-    #[error("Invalid object store URL format: {source}")]
+    #[error("Invalid object store URL format with error: {source}")]
     ParseUrl {
         #[source]
         source: url::ParseError,
     },
-    /// Object store operation error.
-    #[error("Object store operation failed: {source}")]
+    #[error("Object store operation failed with error: {source}")]
     ObjectStore {
         #[source]
         source: object_store::Error,
     },
-    /// Missing required attribute.
-    #[error("Missing required attribute: {0}")]
-    MissingRequiredAttribute(String),
-    /// No path provided.
     #[error("No path provided")]
-    EmptyPath(),
+    EmptyPath,
+    #[error("Missing required builder attribute: {0}")]
+    MissingRequiredAttribute(String),
 }
 
 /// Object store context containing the store instance and base path.
@@ -51,8 +47,8 @@ impl flowgen_core::client::Client for Client {
 
     async fn connect(mut self) -> Result<Client, Error> {
         // Parse URL and prepare connection options.
-        let path = self.path.to_str().ok_or_else(Error::EmptyPath)?;
-        let url = Url::parse(path).map_err(|e| Error::ParseUrl { source: e })?;
+        let path = self.path.to_str().ok_or_else(|| Error::EmptyPath)?;
+        let url = Url::parse(path).map_err(|source| Error::ParseUrl { source })?;
         let mut parse_opts = match &self.options {
             Some(options) => options.clone(),
             None => HashMap::new(),

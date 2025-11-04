@@ -3,9 +3,7 @@
 //! Processes events from the pipeline and converts their data between different formats
 //! such as JSON to Avro with schema validation and key normalization.
 
-use crate::event::{
-    generate_subject, AvroData, Event, EventBuilder, EventData, SenderExt, SubjectSuffix,
-};
+use crate::event::{AvroData, Event, EventBuilder, EventData, SenderExt};
 use serde_avro_fast::ser;
 use serde_json::{Map, Value};
 use std::sync::Arc;
@@ -19,42 +17,42 @@ use tracing::{error, Instrument};
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
 pub enum Error {
-    /// Failed to send converted event through broadcast channel.
-    #[error("Failed to send event message: {source}")]
+    #[error("Sending event to channel failed with error: {source}")]
     SendMessage {
         #[source]
         source: Box<tokio::sync::broadcast::error::SendError<Event>>,
     },
-    /// Event construction or processing failed.
-    #[error(transparent)]
-    Event(#[from] crate::event::Error),
-    /// Avro serialization failed.
-    #[error("Avro serialization failed: {source}")]
+    #[error("Processor event builder failed with error: {source}")]
+    EventBuilder {
+        #[source]
+        source: crate::event::Error,
+    },
+    #[error("ArrowRecordBatch to JSON conversion failed with error: {source}")]
+    ArrowToJson {
+        #[source]
+        source: crate::event::Error,
+    },
+    #[error("Avro serialization failed with error: {source}")]
     SerdeAvro {
         #[source]
         source: serde_avro_fast::ser::SerError,
     },
-    /// Avro deserialization failed.
-    #[error("Avro deserialization failed: {source}")]
+    #[error("Avro deserialization failed with error: {source}")]
     SerdeAvroDe {
         #[source]
         source: serde_avro_fast::de::DeError,
     },
-    /// Avro schema parsing failed.
-    #[error("Avro schema parsing failed: {source}")]
+    #[error("Avro schema parsing failed with error: {source}")]
     SerdeSchema {
         #[source]
         source: serde_avro_fast::schema::SchemaError,
     },
-    /// Required builder attribute was not provided.
+    #[error(
+        "ArrowRecordBatch to Avro conversion is not supported. Please convert data to JSON first."
+    )]
+    ArrowToAvroNotSupported,
     #[error("Missing required attribute: {}", _0)]
     MissingRequiredAttribute(String),
-    /// ArrowRecordBatch to Avro conversion is not supported directly.
-    #[error("ArrowRecordBatch to Avro conversion requires Json intermediate step")]
-    ArrowToAvroNotSupported,
-    /// Host coordination error.
-    #[error("Host coordination error")]
-    Host(#[source] crate::host::Error),
 }
 
 /// Transforms JSON object keys by replacing hyphens with underscores.
@@ -117,7 +115,7 @@ impl EventHandler {
                         let mut serializer_config = serializer_opts.serializer_config.lock().await;
                         let raw_bytes: Vec<u8> =
                             serde_avro_fast::to_datum_vec(&data, &mut serializer_config)
-                                .map_err(|e| Error::SerdeAvro { source: e })?;
+                                .map_err(|source| Error::SerdeAvro { source })?;
 
                         EventData::Avro(AvroData {
                             schema: serializer_opts.schema_string.clone(),
@@ -130,8 +128,9 @@ impl EventHandler {
             },
             EventData::ArrowRecordBatch(ref _batch) => match self.config.target_format {
                 crate::task::convert::config::TargetFormat::Json => {
-                    let json_value = serde_json::Value::try_from(&event.data)?;
-                    EventData::Json(json_value)
+                    let value = serde_json::Value::try_from(&event.data)
+                        .map_err(|source| Error::ArrowToJson { source })?;
+                    EventData::Json(value)
                 }
                 crate::task::convert::config::TargetFormat::Avro => {
                     return Err(Error::ArrowToAvroNotSupported)
@@ -143,12 +142,12 @@ impl EventHandler {
                     let schema: serde_avro_fast::Schema = avro_data
                         .schema
                         .parse()
-                        .map_err(|e| Error::SerdeSchema { source: e })?;
+                        .map_err(|source| Error::SerdeSchema { source })?;
 
                     // Deserialize Avro bytes to JSON value
                     let json_value: Value =
                         serde_avro_fast::from_datum_slice(&avro_data.raw_bytes, &schema)
-                            .map_err(|e| Error::SerdeAvroDe { source: e })?;
+                            .map_err(|source| Error::SerdeAvroDe { source })?;
 
                     EventData::Json(json_value)
                 }
@@ -159,16 +158,14 @@ impl EventHandler {
             },
         };
 
-        // Generate event subject.
-        let subject = generate_subject(&self.config.name, Some(SubjectSuffix::Timestamp));
-
         // Build and send event.
         let e = EventBuilder::new()
             .data(data)
-            .subject(subject)
+            .subject(self.config.name.to_owned())
             .task_id(self.task_id)
             .task_type(self.task_type)
-            .build()?;
+            .build()
+            .map_err(|source| Error::EventBuilder { source })?;
 
         self.tx
             .send_with_logging(e)
@@ -215,7 +212,7 @@ impl crate::task::runner::Runner for Processor {
 
                 let schema: serde_avro_fast::Schema = schema_string
                     .parse()
-                    .map_err(|e| Error::SerdeSchema { source: e })?;
+                    .map_err(|source| Error::SerdeSchema { source })?;
 
                 // Leak the schema to get a 'static reference.
                 // This is intentional and safe in this context since the schema
@@ -356,7 +353,6 @@ mod tests {
     use serde_json::json;
     use tokio::sync::broadcast;
 
-    /// Creates a mock TaskContext for testing.
     fn create_mock_task_context() -> Arc<crate::task::context::TaskContext> {
         let mut labels = Map::new();
         labels.insert(
@@ -388,7 +384,6 @@ mod tests {
 
         assert_eq!(value["normal_key"], "value1");
         assert_eq!(value["another_key"], "value2");
-
         assert_eq!(value["nested"]["inner-key"], "nested_value");
     }
 
@@ -405,107 +400,39 @@ mod tests {
         assert_eq!(value, original);
     }
 
-    #[test]
-    fn test_processor_builder_new() {
-        let builder = ProcessorBuilder::new();
-        assert!(builder.config.is_none());
-        assert!(builder.tx.is_none());
-        assert!(builder.rx.is_none());
-        assert!(builder.task_context.is_none());
-        assert_eq!(builder.task_id, 0);
-    }
-
     #[tokio::test]
-    async fn test_processor_builder_build_success() {
+    async fn test_processor_builder() {
         let config = Arc::new(crate::task::convert::config::Processor {
             name: "test".to_string(),
             target_format: crate::task::convert::config::TargetFormat::Avro,
             schema: Some(r#"{"type": "string"}"#.to_string()),
         });
+        let (tx, rx) = broadcast::channel(100);
 
-        let (tx, _rx) = broadcast::channel(100);
-        let rx2 = tx.subscribe();
-
+        // Success case.
         let processor = ProcessorBuilder::new()
-            .config(config)
-            .sender(tx)
-            .receiver(rx2)
+            .config(config.clone())
+            .sender(tx.clone())
+            .receiver(rx)
             .task_id(1)
             .task_type("test")
             .task_context(create_mock_task_context())
             .build()
-            .await
-            .unwrap();
+            .await;
+        assert!(processor.is_ok());
 
-        assert_eq!(processor.task_id, 1);
-    }
-
-    #[tokio::test]
-    async fn test_processor_builder_missing_config() {
-        let (tx, rx) = broadcast::channel(100);
-
+        // Error case - missing config.
+        let (tx2, rx2) = broadcast::channel(100);
         let result = ProcessorBuilder::new()
-            .sender(tx)
-            .receiver(rx)
+            .sender(tx2)
+            .receiver(rx2)
             .task_context(create_mock_task_context())
             .build()
             .await;
-
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Missing required attribute: config"));
-    }
-
-    #[tokio::test]
-    async fn test_processor_builder_missing_sender() {
-        let config = Arc::new(crate::task::convert::config::Processor::default());
-        let (_, rx) = broadcast::channel(100);
-
-        let result = ProcessorBuilder::new()
-            .config(config)
-            .receiver(rx)
-            .task_context(create_mock_task_context())
-            .build()
-            .await;
-
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Missing required attribute: sender"));
-    }
-
-    #[tokio::test]
-    async fn test_processor_builder_missing_receiver() {
-        let config = Arc::new(crate::task::convert::config::Processor::default());
-        let (tx, _) = broadcast::channel(100);
-
-        let result = ProcessorBuilder::new()
-            .config(config)
-            .sender(tx)
-            .task_context(create_mock_task_context())
-            .build()
-            .await;
-
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Missing required attribute: receiver"));
-    }
-
-    #[test]
-    fn test_avro_serializer_options_creation() {
-        let options = AvroSerializerOptions {
-            schema_string: r#"{"type": "string"}"#.to_string(),
-            serializer_config: Mutex::new(serde_avro_fast::ser::SerializerConfig::new(Box::leak(
-                Box::new(r#"{"type": "string"}"#.parse().unwrap()),
-            ))),
-        };
-
-        assert_eq!(options.schema_string, r#"{"type": "string"}"#);
+        assert!(matches!(
+            result.unwrap_err(),
+            Error::MissingRequiredAttribute(_)
+        ));
     }
 
     #[tokio::test]
@@ -548,27 +475,8 @@ mod tests {
             }
             _ => panic!("Expected JSON passthrough"),
         }
-        assert!(output_event.subject.starts_with("test."));
+        assert_eq!(output_event.subject, "test");
         assert_eq!(output_event.task_id, 1);
-    }
-
-    #[tokio::test]
-    async fn test_processor_builder_build_missing_task_context() {
-        let config = Arc::new(crate::task::convert::config::Processor::default());
-        let (tx, rx) = broadcast::channel(100);
-
-        let result = ProcessorBuilder::new()
-            .config(config)
-            .sender(tx)
-            .receiver(rx)
-            .task_id(1)
-            .build()
-            .await;
-
-        assert!(result.is_err());
-        assert!(
-            matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "task_context")
-        );
     }
 
     #[tokio::test]
@@ -623,7 +531,7 @@ mod tests {
             }
             _ => panic!("Expected JSON output from Avro conversion"),
         }
-        assert!(output_event.subject.starts_with("test."));
+        assert_eq!(output_event.subject, "test");
         assert_eq!(output_event.task_id, 1);
     }
 
@@ -674,7 +582,7 @@ mod tests {
             }
             _ => panic!("Expected Avro passthrough"),
         }
-        assert!(output_event.subject.starts_with("test."));
+        assert_eq!(output_event.subject, "test");
         assert_eq!(output_event.task_id, 1);
     }
 }

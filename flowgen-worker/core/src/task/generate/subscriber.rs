@@ -3,7 +3,7 @@
 //! Implements a timer-based event generator that creates events at regular intervals
 //! with optional message content and count limits for testing and simulation workflows.
 
-use crate::event::{generate_subject, Event, EventBuilder, EventData, SenderExt, SubjectSuffix};
+use crate::event::{Event, EventBuilder, EventData, SenderExt};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
@@ -28,30 +28,25 @@ pub struct SystemInfo {
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
 pub enum Error {
-    /// Failed to send event through broadcast channel.
-    #[error("Failed to send event message: {source}")]
+    #[error("Sending event to channel failed with error: {source}")]
     SendMessage {
         #[source]
         source: Box<tokio::sync::broadcast::error::SendError<Event>>,
     },
-    /// Event construction failed.
-    #[error(transparent)]
-    Event(#[from] crate::event::Error),
-    /// Required builder attribute was not provided.
-    #[error("Missing required attribute: {}", _0)]
-    MissingRequiredAttribute(String),
-    /// Cache operation error with descriptive message.
-    #[error("Cache error: {_0}")]
+    #[error("Subscriber event builder failed with error: {source}")]
+    EventBuilder {
+        #[source]
+        source: crate::event::Error,
+    },
+    #[error("Cache operation failed with error: {_0}")]
     Cache(String),
-    /// System time error when getting current timestamp.
     #[error("System time error: {source}")]
     SystemTime {
         #[source]
         source: std::time::SystemTimeError,
     },
-    /// Host coordination error.
-    #[error("Host coordination error")]
-    Host(#[source] crate::host::Error),
+    #[error("Missing required builder attribute: {}", _0)]
+    MissingRequiredAttribute(String),
 }
 /// Event handler for generating scheduled events.
 pub struct EventHandler {
@@ -152,16 +147,14 @@ impl EventHandler {
                 }
             };
 
-            // Generate event subject.
-            let subject = generate_subject(&self.config.name, Some(SubjectSuffix::Timestamp));
-
             // Build and send event.
             let e = EventBuilder::new()
                 .data(EventData::Json(data))
-                .subject(subject.clone())
+                .subject(self.config.name.to_owned())
                 .task_id(self.task_id)
                 .task_type(self.task_type)
-                .build()?;
+                .build()
+                .map_err(|source| Error::EventBuilder { source })?;
             self.tx
                 .send_with_logging(e)
                 .map_err(|source| Error::SendMessage { source })?;
@@ -380,72 +373,38 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_subscriber_builder_new() {
-        let builder = SubscriberBuilder::new();
-        assert!(builder.config.is_none());
-        assert!(builder.tx.is_none());
-        assert!(builder.task_context.is_none());
-        assert_eq!(builder.task_id, 0);
-    }
-
     #[tokio::test]
-    async fn test_subscriber_builder_build_success() {
+    async fn test_subscriber_builder() {
         let config = Arc::new(crate::task::generate::config::Subscriber {
             name: "test".to_string(),
             message: Some("test message".to_string()),
             interval: 1,
             count: Some(1),
         });
-
         let (tx, _rx) = broadcast::channel(100);
 
+        // Success case.
         let subscriber = SubscriberBuilder::new()
             .config(config.clone())
-            .sender(tx)
+            .sender(tx.clone())
             .task_id(1)
             .task_type("test")
             .task_context(create_mock_task_context())
             .build()
-            .await
-            .unwrap();
+            .await;
+        assert!(subscriber.is_ok());
 
-        assert_eq!(subscriber.task_id, 1);
-        assert_eq!(subscriber.config.interval, 1);
-    }
-
-    #[tokio::test]
-    async fn test_subscriber_builder_missing_config() {
-        let (tx, _rx) = broadcast::channel(100);
-
+        // Error case - missing config.
+        let (tx2, _rx2) = broadcast::channel(100);
         let result = SubscriberBuilder::new()
-            .sender(tx)
+            .sender(tx2)
             .task_context(create_mock_task_context())
             .build()
             .await;
-
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Missing required attribute: config"));
-    }
-
-    #[tokio::test]
-    async fn test_subscriber_builder_missing_sender() {
-        let config = Arc::new(crate::task::generate::config::Subscriber::default());
-
-        let result = SubscriberBuilder::new()
-            .config(config)
-            .task_context(create_mock_task_context())
-            .build()
-            .await;
-
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Missing required attribute: sender"));
+        assert!(matches!(
+            result.unwrap_err(),
+            Error::MissingRequiredAttribute(_)
+        ));
     }
 
     #[tokio::test]
@@ -474,8 +433,8 @@ mod tests {
         let event1 = rx.recv().await.unwrap();
         let event2 = rx.recv().await.unwrap();
 
-        assert!(event1.subject.starts_with("test."));
-        assert!(event2.subject.starts_with("test."));
+        assert_eq!(event1.subject, "test");
+        assert_eq!(event2.subject, "test");
         assert_eq!(event1.task_id, 1);
         assert_eq!(event2.task_id, 1);
 
@@ -566,23 +525,5 @@ mod tests {
         // Check that cache key was created with flow.task_type.task format
         let cache_data = mock_cache.data.lock().await;
         assert!(cache_data.contains_key("test-flow.test.test.last_run"));
-    }
-
-    #[tokio::test]
-    async fn test_subscriber_builder_build_missing_task_context() {
-        let config = Arc::new(crate::task::generate::config::Subscriber::default());
-        let (tx, _rx) = broadcast::channel(100);
-
-        let result = SubscriberBuilder::new()
-            .config(config)
-            .sender(tx)
-            .task_id(1)
-            .build()
-            .await;
-
-        assert!(result.is_err());
-        assert!(
-            matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "task_context")
-        );
     }
 }

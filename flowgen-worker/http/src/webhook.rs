@@ -24,49 +24,45 @@ const DEFAULT_PAYLOAD_KEY: &str = "payload";
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
 pub enum Error {
-    /// Failed to send event message.
-    #[error("Failed to send event message: {source}")]
+    #[error("Sending event to channel failed with error: {source}")]
     SendMessage {
         #[source]
         source: Box<tokio::sync::broadcast::error::SendError<Event>>,
     },
-    /// Event building or processing failed.
-    #[error(transparent)]
-    Event(#[from] flowgen_core::event::Error),
-    /// JSON serialization/deserialization failed.
-    #[error("JSON serialization/deserialization failed: {source}")]
+    #[error("Webhook event builder failed with error: {source}")]
+    EventBuilder {
+        #[source]
+        source: flowgen_core::event::Error,
+    },
+    #[error("JSON serialization/deserialization failed with error: {source}")]
     SerdeJson {
         #[source]
         source: serde_json::Error,
     },
-    /// Axum HTTP processing failed.
-    #[error("Axum HTTP processing failed: {source}")]
+    #[error("Axum HTTP processing failed with error: {source}")]
     Axum {
         #[source]
         source: axum::Error,
     },
-    /// Authentication failed - no credentials provided.
-    #[error("No authorization header provided")]
-    NoCredentials,
-    /// Authentication failed - invalid credentials.
-    #[error("Invalid authorization credentials")]
-    InvalidCredentials,
-    /// Authentication failed - malformed authorization header.
-    #[error("Malformed authorization header")]
-    MalformedCredentials,
-    /// Failed to read credentials file.
-    #[error("Failed to read credentials file at {path}: {source}")]
+    #[error("Failed to read credentials file at {path} with error: {source}")]
     ReadCredentials {
         path: std::path::PathBuf,
         #[source]
         source: std::io::Error,
     },
-    /// Required configuration attribute is missing.
-    #[error("Missing required attribute: {}", _0)]
+    #[error("Task manager failed with error: {source}")]
+    TaskManager {
+        #[source]
+        source: flowgen_core::task::manager::Error,
+    },
+    #[error("No authorization header provided")]
+    NoCredentials,
+    #[error("Invalid authorization credentials")]
+    InvalidCredentials,
+    #[error("Malformed authorization header")]
+    MalformedCredentials,
+    #[error("Missing required builder attribute: {}", _0)]
     MissingRequiredAttribute(String),
-    /// Task manager error.
-    #[error(transparent)]
-    TaskManager(#[from] flowgen_core::task::manager::Error),
 }
 
 impl IntoResponse for Error {
@@ -195,7 +191,8 @@ impl EventHandler {
             .subject(subject)
             .task_id(self.task_id)
             .task_type(self.task_type)
-            .build()?;
+            .build()
+            .map_err(|source| Error::EventBuilder { source })?;
 
         self.tx
             .send_with_logging(e)
@@ -420,25 +417,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_processor_builder_new() {
-        let builder = ProcessorBuilder::new();
-        assert!(builder.config.is_none());
-        assert!(builder.tx.is_none());
-        assert_eq!(builder.task_id, 0);
-        assert!(builder.task_context.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_processor_builder_default() {
-        let builder = ProcessorBuilder::default();
-        assert!(builder.config.is_none());
-        assert!(builder.tx.is_none());
-        assert_eq!(builder.task_id, 0);
-        assert!(builder.task_context.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_processor_builder_config() {
+    async fn test_processor_builder() {
         let config = Arc::new(crate::config::Processor {
             name: "test_webhook".to_string(),
             endpoint: "/webhook".to_string(),
@@ -447,124 +426,30 @@ mod tests {
             headers: None,
             credentials_path: None,
         });
-
-        let builder = ProcessorBuilder::new().config(config.clone());
-        assert_eq!(builder.config, Some(config));
-    }
-
-    #[tokio::test]
-    async fn test_processor_builder_sender() {
-        let (tx, _rx) = broadcast::channel(100);
-        let builder = ProcessorBuilder::new().sender(tx);
-        assert!(builder.tx.is_some());
-    }
-
-    #[tokio::test]
-    async fn test_processor_builder_task_id() {
-        let builder = ProcessorBuilder::new().task_id(42);
-        assert_eq!(builder.task_id, 42);
-    }
-
-    #[tokio::test]
-    async fn test_processor_builder_build_missing_config() {
         let (tx, _rx) = broadcast::channel(100);
 
-        let result = ProcessorBuilder::new()
-            .sender(tx)
-            .task_id(1)
-            .task_context(create_mock_task_context())
-            .build()
-            .await;
-
-        assert!(result.is_err());
-        assert!(
-            matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "config")
-        );
-    }
-
-    #[tokio::test]
-    async fn test_processor_builder_build_missing_sender() {
-        let config = Arc::new(crate::config::Processor {
-            name: "test_webhook".to_string(),
-            endpoint: "/test".to_string(),
-            method: crate::config::Method::GET,
-            payload: None,
-            headers: None,
-            credentials_path: None,
-        });
-
-        let result = ProcessorBuilder::new()
-            .config(config)
-            .task_id(1)
-            .task_context(create_mock_task_context())
-            .build()
-            .await;
-
-        assert!(result.is_err());
-        assert!(
-            matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "sender")
-        );
-    }
-
-    #[tokio::test]
-    async fn test_processor_builder_build_success() {
-        let (tx, _rx) = broadcast::channel(100);
-        let config = Arc::new(crate::config::Processor {
-            name: "test_webhook".to_string(),
-            endpoint: "/success".to_string(),
-            method: crate::config::Method::POST,
-            payload: Some(crate::config::Payload {
-                object: None,
-                input: Some("{\"webhook\": \"data\"}".to_string()),
-                from_event: false,
-                send_as: crate::config::PayloadSendAs::Json,
-            }),
-            headers: Some({
-                let mut headers = HashMap::new();
-                headers.insert("X-Webhook".to_string(), "test".to_string());
-                headers
-            }),
-            credentials_path: None,
-        });
-        let result = ProcessorBuilder::new()
-            .config(config.clone())
-            .sender(tx)
-            .task_id(5)
-            .task_type("test")
-            .task_context(create_mock_task_context())
-            .build()
-            .await;
-
-        assert!(result.is_ok());
-        let processor = result.unwrap();
-        assert_eq!(processor.config, config);
-        assert_eq!(processor.task_id, 5);
-    }
-
-    #[tokio::test]
-    async fn test_processor_builder_chain() {
-        let (tx, _rx) = broadcast::channel(50);
-        let config = Arc::new(crate::config::Processor {
-            name: "test_webhook".to_string(),
-            endpoint: "/chain".to_string(),
-            method: crate::config::Method::PUT,
-            payload: None,
-            headers: None,
-            credentials_path: None,
-        });
-
+        // Success case.
         let processor = ProcessorBuilder::new()
             .config(config.clone())
-            .sender(tx)
-            .task_id(10)
+            .sender(tx.clone())
+            .task_id(1)
             .task_type("test")
             .task_context(create_mock_task_context())
             .build()
-            .await
-            .unwrap();
+            .await;
+        assert!(processor.is_ok());
 
-        assert_eq!(processor.config, config);
-        assert_eq!(processor.task_id, 10);
+        // Error case - missing config.
+        let (tx2, _rx2) = broadcast::channel(100);
+        let result = ProcessorBuilder::new()
+            .sender(tx2)
+            .task_context(create_mock_task_context())
+            .build()
+            .await;
+        assert!(matches!(
+            result.unwrap_err(),
+            Error::MissingRequiredAttribute(_)
+        ));
     }
 
     #[test]

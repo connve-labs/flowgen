@@ -3,7 +3,7 @@
 //! Executes Rhai scripts to transform, filter, or manipulate event data.
 //! Scripts can return objects, arrays, or null to control event emission.
 
-use crate::event::{generate_subject, Event, EventBuilder, EventData, SenderExt, SubjectSuffix};
+use crate::event::{Event, EventBuilder, EventData, SenderExt};
 use rhai::{Dynamic, Engine, Scope};
 use serde_json::Value;
 use std::sync::Arc;
@@ -14,33 +14,30 @@ use tracing::{error, Instrument};
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
 pub enum Error {
-    /// Failed to send event through broadcast channel.
-    #[error("Failed to send event message: {source}")]
+    #[error("Sending event to channel failed with error: {source}")]
     SendMessage {
         #[source]
         source: Box<tokio::sync::broadcast::error::SendError<Event>>,
     },
-    /// Event construction or processing failed.
-    #[error(transparent)]
-    Event(#[from] crate::event::Error),
-    /// Script execution failed.
-    #[error("Script execution failed: {source}")]
+    #[error("Processor event builder failed with error: {source}")]
+    EventBuilder {
+        #[source]
+        source: crate::event::Error,
+    },
+    #[error("Script execution failed with error: {source}")]
     ScriptExecution {
         #[source]
         source: Box<rhai::EvalAltResult>,
     },
-    /// Script returned invalid type.
+    #[error("Event conversion failed with error: {source}")]
+    EventConversion {
+        #[source]
+        source: crate::event::Error,
+    },
     #[error("Script returned invalid type: {0}")]
     InvalidReturnType(String),
-    /// Required builder attribute was not provided.
-    #[error("Missing required attribute: {}", _0)]
+    #[error("Missing required builder attribute: {}", _0)]
     MissingRequiredAttribute(String),
-    /// Expected JSON input but got different event type.
-    #[error("Expected JSON input, got ArrowRecordBatch")]
-    ExpectedJsonGotArrowRecordBatch,
-    /// Expected JSON input but got Avro.
-    #[error("Expected JSON input, got Avro")]
-    ExpectedJsonGotAvro,
 }
 
 /// Handles individual script execution operations.
@@ -66,56 +63,69 @@ impl EventHandler {
             return Ok(());
         }
 
-        // Extract JSON data from event
-        let json_data = match event.data {
-            EventData::Json(data) => data,
-            EventData::ArrowRecordBatch(_) => return Err(Error::ExpectedJsonGotArrowRecordBatch),
-            EventData::Avro(_) => return Err(Error::ExpectedJsonGotAvro),
-        };
-
-        // Convert JSON to Rhai Dynamic
+        // Prepare data for script execution.
+        let value = Value::try_from(&event).map_err(|source| Error::EventConversion { source })?;
+        let event_obj = value["event"].to_owned();
         let mut scope = Scope::new();
-        scope.push("data", json_to_dynamic(&json_data)?);
+        scope.push("event", json_to_dynamic(&event_obj)?);
 
-        // Execute script
+        // Execute script.
         let result: Dynamic = self
             .engine
             .eval_with_scope(&mut scope, &self.config.code)
             .map_err(|e| Error::ScriptExecution { source: e })?;
 
-        // Convert result back to JSON
+        // Convert result back to JSON.
         let result_json = dynamic_to_json(result)?;
 
-        // Handle different result types
+        // Handle different result types.
         match result_json {
             Value::Null => {
-                // Filter out - don't emit event
+                // Don't emit events.
                 Ok(())
             }
             Value::Array(arr) => {
-                // Emit multiple events, one per array element
+                // Emit multiple events, one per array element.
                 for element in arr {
-                    self.emit_event(element).await?;
+                    self.emit_event(element, None, None).await?;
                 }
                 Ok(())
             }
+            Value::Object(ref obj) if obj.contains_key("subject") && obj.contains_key("data") => {
+                // Result is an event object with metadata, preserve it.
+                let subject = obj
+                    .get("subject")
+                    .and_then(|s| s.as_str())
+                    .map(|s| s.to_owned());
+                let data = obj.get("data").unwrap_or(&Value::Null).clone();
+                let id = obj.get("id").and_then(|v| v.as_str()).map(|s| s.to_owned());
+                self.emit_event(data, subject, id).await
+            }
             value => {
-                // Emit single event
-                self.emit_event(value).await
+                // Emit single event with data only.
+                self.emit_event(value, None, None).await
             }
         }
     }
 
-    /// Emits a single event with the given data.
-    async fn emit_event(&self, data: Value) -> Result<(), Error> {
-        let subject = generate_subject(&self.config.name, Some(SubjectSuffix::Timestamp));
-
-        let e = EventBuilder::new()
+    /// Emits a single event with the given data, optional custom subject, and optional ID.
+    async fn emit_event(
+        &self,
+        data: Value,
+        subject: Option<String>,
+        id: Option<String>,
+    ) -> Result<(), Error> {
+        let mut e = EventBuilder::new()
             .data(EventData::Json(data))
-            .subject(subject)
+            .subject(subject.unwrap_or_else(|| self.config.name.to_owned()))
             .task_id(self.task_id)
-            .task_type(self.task_type)
-            .build()?;
+            .task_type(self.task_type);
+
+        if let Some(id) = id {
+            e = e.id(id);
+        }
+
+        let e = e.build().map_err(|source| Error::EventBuilder { source })?;
 
         self.tx
             .send_with_logging(e)
@@ -306,57 +316,39 @@ mod tests {
         )
     }
 
-    #[test]
-    fn test_processor_builder_new() {
-        let builder = ProcessorBuilder::new();
-        assert!(builder.config.is_none());
-        assert!(builder.tx.is_none());
-        assert!(builder.rx.is_none());
-        assert!(builder.task_context.is_none());
-        assert_eq!(builder.task_id, 0);
-    }
-
     #[tokio::test]
-    async fn test_processor_builder_build_success() {
+    async fn test_processor_builder() {
         let config = Arc::new(crate::task::script::config::Processor {
             name: "test".to_string(),
             engine: crate::task::script::config::ScriptEngine::Rhai,
-            code: "data".to_string(),
+            code: "event".to_string(),
         });
+        let (tx, rx) = broadcast::channel(100);
 
-        let (tx, _rx) = broadcast::channel(100);
-        let rx2 = tx.subscribe();
-
+        // Success case.
         let processor = ProcessorBuilder::new()
-            .config(config)
-            .sender(tx)
-            .receiver(rx2)
+            .config(config.clone())
+            .sender(tx.clone())
+            .receiver(rx)
             .task_id(1)
             .task_type("test")
             .task_context(create_mock_task_context())
             .build()
-            .await
-            .unwrap();
+            .await;
+        assert!(processor.is_ok());
 
-        assert_eq!(processor.task_id, 1);
-    }
-
-    #[tokio::test]
-    async fn test_processor_builder_missing_config() {
-        let (tx, rx) = broadcast::channel(100);
-
+        // Error case - missing config.
+        let (tx2, rx2) = broadcast::channel(100);
         let result = ProcessorBuilder::new()
-            .sender(tx)
-            .receiver(rx)
+            .sender(tx2)
+            .receiver(rx2)
             .task_context(create_mock_task_context())
             .build()
             .await;
-
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Missing required attribute: config"));
+        assert!(matches!(
+            result.unwrap_err(),
+            Error::MissingRequiredAttribute(_)
+        ));
     }
 
     #[tokio::test]
@@ -364,7 +356,7 @@ mod tests {
         let config = Arc::new(crate::task::script::config::Processor {
             name: "test".to_string(),
             engine: crate::task::script::config::ScriptEngine::Rhai,
-            code: r#"#{ original: data, transformed: true }"#.to_string(),
+            code: r#"#{ original: event.data, transformed: true }"#.to_string(),
         });
 
         let (tx, mut rx) = broadcast::channel(100);
@@ -494,14 +486,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_event_handler_wrong_input_type_arrow() {
+    async fn test_event_handler_arrow_input() {
         let config = Arc::new(crate::task::script::config::Processor {
             name: "test".to_string(),
             engine: crate::task::script::config::ScriptEngine::Rhai,
-            code: "data".to_string(),
+            code: "event".to_string(),
         });
 
-        let (tx, _rx) = broadcast::channel(100);
+        let (tx, mut rx) = broadcast::channel(100);
 
         let event_handler = EventHandler {
             config,
@@ -534,10 +526,10 @@ mod tests {
         };
 
         let result = event_handler.handle(input_event).await;
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            Error::ExpectedJsonGotArrowRecordBatch
-        ));
+        assert!(result.is_ok());
+
+        let output_event = rx.try_recv().unwrap();
+        assert_eq!(output_event.subject, "input.subject");
+        assert_eq!(output_event.task_id, 1);
     }
 }

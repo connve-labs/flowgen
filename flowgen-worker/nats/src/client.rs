@@ -16,36 +16,30 @@ struct Credentials {
 /// Errors that can occur during NATS client operations.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    /// Failed to read credentials file.
-    #[error("Failed to read NATS credentials file at {path}: {source}")]
+    #[error("Failed to read NATS credentials file at {path} with error: {source}")]
     ReadCredentials {
         path: std::path::PathBuf,
         #[source]
         source: std::io::Error,
     },
-    /// Failed to parse credentials JSON file.
-    #[error("Failed to parse NATS credentials JSON: {source}")]
+    #[error("Failed to parse NATS credentials JSON with error: {source}")]
     ParseCredentials {
         #[source]
         source: serde_json::Error,
     },
-    /// Invalid URL format in credentials or configuration.
-    #[error("Invalid NATS URL format: {source}")]
+    #[error("Invalid NATS URL format with error: {source}")]
     ParseUrl {
         #[source]
         source: url::ParseError,
     },
-    /// Failed to establish connection to NATS server.
-    #[error("Failed to connect to NATS server: {source}")]
+    #[error("Failed to connect to NATS server with error: {source}")]
     Connect {
         #[source]
         source: async_nats::ConnectError,
     },
-    /// Credentials file path was not provided during client creation.
     #[error("Credentials are not provided")]
-    CredentialsNotProvided(),
-    /// Required configuration attribute is missing.
-    #[error("Missing required attribute: {}", _0)]
+    CredentialsNotProvided,
+    #[error("Missing required builder attribute: {}", _0)]
     MissingRequiredAttribute(String),
 }
 

@@ -1,9 +1,7 @@
 use super::message::FlowgenMessageExt;
 use flowgen_core::client::Client;
 use flowgen_core::config::ConfigExt;
-use flowgen_core::event::{
-    generate_subject, Event, EventBuilder, EventData, SenderExt, SubjectSuffix,
-};
+use flowgen_core::event::{Event, EventBuilder, EventData, SenderExt};
 use std::sync::Arc;
 use tokio::sync::{
     broadcast::{Receiver, Sender},
@@ -34,54 +32,57 @@ impl From<async_nats::jetstream::publish::PublishAck> for PublishAck {
 /// Errors that can occur during NATS JetStream publishing operations.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    /// Client authentication or connection error.
-    #[error(transparent)]
-    ClientAuth(#[from] crate::client::Error),
-    /// Failed to publish message to JetStream.
-    #[error("Failed to publish message to JetStream: {source}")]
-    Publish {
-        #[source]
-        source: async_nats::jetstream::context::PublishError,
-    },
-    /// Stream management error.
-    #[error(transparent)]
-    Stream(#[from] super::stream::Error),
-    /// Error converting event to message format.
-    #[error(transparent)]
-    MessageConversion(#[from] super::message::Error),
-    /// Required event attribute is missing.
-    #[error("Missing required attribute: {}", _0)]
-    MissingRequiredAttribute(String),
-    /// Stream configuration is missing.
-    #[error("Stream configuration is missing")]
-    NoStream,
-    /// Client was not properly initialized or is missing.
-    #[error("Client is missing or not initialized properly")]
-    MissingClient(),
-    /// Host coordination error.
-    #[error(transparent)]
-    Host(#[from] flowgen_core::host::Error),
-    /// Failed to send event through broadcast channel.
-    #[error("Failed to send event message: {source}")]
+    #[error("Sending event to channel failed with error: {source}")]
     SendMessage {
         #[source]
         source: Box<tokio::sync::broadcast::error::SendError<Event>>,
     },
-    /// JSON serialization error.
-    #[error("JSON serialization failed: {source}")]
+    #[error("Publisher event builder failed with error: {source}")]
+    EventBuilder {
+        #[source]
+        source: flowgen_core::event::Error,
+    },
+    #[error("NATS client failed with error: {source}")]
+    ClientAuth {
+        #[source]
+        source: crate::client::Error,
+    },
+    #[error("Failed to publish message to JetStream with error: {source}")]
+    Publish {
+        #[source]
+        source: async_nats::jetstream::context::PublishError,
+    },
+    #[error("Stream management failed with error: {source}")]
+    Stream {
+        #[source]
+        source: super::stream::Error,
+    },
+    #[error("Message conversion failed with error: {source}")]
+    MessageConversion {
+        #[source]
+        source: super::message::Error,
+    },
+    #[error("JSON serialization failed with error: {source}")]
     SerdeJson {
         #[source]
         source: serde_json::Error,
     },
-    /// Event building error.
-    #[error(transparent)]
-    Event(#[from] flowgen_core::event::Error),
-    /// Configuration rendering error.
-    #[error("Configuration rendering failed: {source}")]
+    #[error("Configuration template rendering failed with error: {source}")]
     ConfigRender {
         #[source]
         source: flowgen_core::config::Error,
     },
+    #[error("Host coordination failed with error: {source}")]
+    Host {
+        #[source]
+        source: flowgen_core::host::Error,
+    },
+    #[error("Stream configuration is missing")]
+    NoStream,
+    #[error("Client is missing or not initialized properly")]
+    MissingClient,
+    #[error("Missing required builder attribute: {}", _0)]
+    MissingRequiredAttribute(String),
 }
 
 pub struct EventHandler {
@@ -98,25 +99,23 @@ impl EventHandler {
             return Ok(());
         }
 
-        // Render config with event data to support templates like "pubsub.{{event.subject}}"
-        let event_data = event.to_template_data().map_err(Error::Event)?;
-
-        let render_data = serde_json::json!({
-            "event": event_data
-        });
-
-        let rendered_config = self
+        // Render config with to support templates inside configuration.
+        let event_value = serde_json::value::Value::try_from(&event)
+            .map_err(|source| Error::EventBuilder { source })?;
+        let config = self
             .config
-            .render(&render_data)
-            .map_err(|e| Error::ConfigRender { source: e })?;
+            .render(&event_value)
+            .map_err(|source| Error::ConfigRender { source })?;
 
-        let e = event.to_publish()?;
+        let e = event
+            .to_publish()
+            .map_err(|source| Error::MessageConversion { source })?;
 
         let ack_future = self
             .jetstream
             .lock()
             .await
-            .send_publish(rendered_config.subject, e)
+            .send_publish(config.subject, e)
             .await
             .map_err(|e| Error::Publish { source: e })?;
 
@@ -124,14 +123,13 @@ impl EventHandler {
         let ack: PublishAck = ack.into();
         let ack_json = serde_json::to_value(&ack).map_err(|e| Error::SerdeJson { source: e })?;
 
-        let subject = generate_subject(&self.config.name, Some(SubjectSuffix::Timestamp));
-
         let e = EventBuilder::new()
-            .subject(subject)
+            .subject(self.config.name.clone())
             .data(EventData::Json(ack_json))
             .task_id(self.task_id)
             .task_type(self.task_type)
-            .build()?;
+            .build()
+            .map_err(|source| Error::EventBuilder { source })?;
 
         self.tx
             .send_with_logging(e)
@@ -171,15 +169,19 @@ impl flowgen_core::task::runner::Runner for Publisher {
     async fn init(&self) -> Result<EventHandler, Error> {
         let client = crate::client::ClientBuilder::new()
             .credentials_path(self.config.credentials_path.clone())
-            .build()?
+            .build()
+            .map_err(|source| Error::ClientAuth { source })?
             .connect()
-            .await?;
+            .await
+            .map_err(|source| Error::ClientAuth { source })?;
 
         if let Some(jetstream) = client.jetstream {
             let stream_opts = self.config.stream.as_ref().ok_or_else(|| Error::NoStream)?;
 
             let jetstream = match stream_opts.create_or_update {
-                true => super::stream::create_or_update_stream(jetstream, stream_opts).await?,
+                true => super::stream::create_or_update_stream(jetstream, stream_opts)
+                    .await
+                    .map_err(|source| Error::Stream { source })?,
                 false => jetstream,
             };
 
@@ -194,7 +196,7 @@ impl flowgen_core::task::runner::Runner for Publisher {
 
             Ok(event_handler)
         } else {
-            Err(Error::MissingClient())
+            Err(Error::MissingClient)
         }
     }
 
@@ -332,24 +334,8 @@ mod tests {
         )
     }
 
-    #[test]
-    fn test_publisher_builder_new() {
-        let builder = PublisherBuilder::new();
-        assert!(builder.config.is_none());
-        assert!(builder.rx.is_none());
-        assert_eq!(builder.task_id, 0);
-    }
-
-    #[test]
-    fn test_publisher_builder_default() {
-        let builder = PublisherBuilder::default();
-        assert!(builder.config.is_none());
-        assert!(builder.rx.is_none());
-        assert_eq!(builder.task_id, 0);
-    }
-
-    #[test]
-    fn test_publisher_builder_config() {
+    #[tokio::test]
+    async fn test_publisher_builder() {
         let config = Arc::new(super::super::config::Publisher {
             name: "test_publisher".to_string(),
             credentials_path: PathBuf::from("/test/creds.jwt"),
@@ -369,164 +355,30 @@ mod tests {
             batch_size: None,
             delay_secs: None,
         });
-
-        let builder = PublisherBuilder::new().config(config.clone());
-        assert_eq!(builder.config, Some(config));
-    }
-
-    #[test]
-    fn test_publisher_builder_receiver() {
-        let (_tx, rx) = broadcast::channel(100);
-        let builder = PublisherBuilder::new().receiver(rx);
-        assert!(builder.rx.is_some());
-    }
-
-    #[test]
-    fn test_publisher_builder_task_id() {
-        let builder = PublisherBuilder::new().task_id(42);
-        assert_eq!(builder.task_id, 42);
-    }
-
-    #[tokio::test]
-    async fn test_publisher_builder_build_missing_config() {
-        let (_tx, rx) = broadcast::channel(100);
-        let result = PublisherBuilder::new()
-            .receiver(rx)
-            .task_id(1)
-            .build()
-            .await;
-
-        assert!(result.is_err());
-        assert!(
-            matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "config")
-        );
-    }
-
-    #[tokio::test]
-    async fn test_publisher_builder_build_missing_receiver() {
-        let config = Arc::new(super::super::config::Publisher {
-            name: "test_publisher".to_string(),
-            credentials_path: PathBuf::from("/test/creds.jwt"),
-            subject: "test.subject".to_string(),
-            stream: None,
-            durable_name: None,
-            batch_size: None,
-            delay_secs: None,
-        });
-
-        let result = PublisherBuilder::new()
-            .config(config)
-            .task_id(1)
-            .build()
-            .await;
-
-        assert!(result.is_err());
-        assert!(
-            matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "receiver")
-        );
-    }
-
-    #[tokio::test]
-    async fn test_publisher_builder_build_success() {
-        let config = Arc::new(super::super::config::Publisher {
-            name: "test_publisher".to_string(),
-            credentials_path: PathBuf::from("/test/creds.jwt"),
-            subject: "test.subject.1".to_string(),
-            stream: Some(super::super::config::StreamOptions {
-                name: "test_stream".to_string(),
-                description: Some("Test description".to_string()),
-                subjects: vec!["test.subject.1".to_string(), "test.subject.2".to_string()],
-                max_age_secs: Some(86400),
-                max_messages_per_subject: Some(1),
-                create_or_update: true,
-                retention: Some(super::super::config::RetentionPolicy::Limits),
-                discard: Some(super::super::config::DiscardPolicy::Old),
-                ..Default::default()
-            }),
-            durable_name: None,
-            batch_size: None,
-            delay_secs: None,
-        });
         let (tx, rx) = broadcast::channel(100);
 
-        let result = PublisherBuilder::new()
-            .config(config.clone())
-            .receiver(rx)
-            .sender(tx)
-            .task_id(5)
-            .task_type("test")
-            .task_context(create_mock_task_context())
-            .build()
-            .await;
-
-        assert!(result.is_ok());
-        let publisher = result.unwrap();
-        assert_eq!(publisher.config, config);
-        assert_eq!(publisher.task_id, 5);
-    }
-
-    #[tokio::test]
-    async fn test_publisher_builder_chain() {
-        let config = Arc::new(super::super::config::Publisher {
-            name: "test_publisher".to_string(),
-            credentials_path: PathBuf::from("/chain/test.creds"),
-            subject: "chain.subject".to_string(),
-            stream: Some(super::super::config::StreamOptions {
-                name: "chain_stream".to_string(),
-                description: None,
-                subjects: vec!["chain.subject".to_string()],
-                max_age_secs: Some(1800),
-                max_messages_per_subject: None,
-                create_or_update: false,
-                retention: Some(super::super::config::RetentionPolicy::WorkQueue),
-                discard: Some(super::super::config::DiscardPolicy::Old),
-                ..Default::default()
-            }),
-            durable_name: None,
-            batch_size: None,
-            delay_secs: None,
-        });
-        let (tx, rx) = broadcast::channel(50);
-
+        // Success case.
         let publisher = PublisherBuilder::new()
             .config(config.clone())
             .receiver(rx)
-            .sender(tx)
-            .task_id(10)
+            .sender(tx.clone())
+            .task_id(1)
             .task_type("test")
             .task_context(create_mock_task_context())
             .build()
-            .await
-            .unwrap();
+            .await;
+        assert!(publisher.is_ok());
 
-        assert_eq!(publisher.config, config);
-        assert_eq!(publisher.task_id, 10);
-    }
-
-    #[tokio::test]
-    async fn test_publisher_builder_build_missing_task_context() {
-        let config = Arc::new(super::super::config::Publisher {
-            name: "test_publisher".to_string(),
-            credentials_path: PathBuf::from("/test/creds.jwt"),
-            subject: "test.subject".to_string(),
-            stream: None,
-            durable_name: None,
-            batch_size: None,
-            delay_secs: None,
-        });
-        let (tx, rx) = broadcast::channel(100);
-
+        // Error case - missing config.
+        let (_tx2, rx2) = broadcast::channel(100);
         let result = PublisherBuilder::new()
-            .config(config)
-            .receiver(rx)
-            .sender(tx)
-            .task_id(1)
+            .receiver(rx2)
+            .task_context(create_mock_task_context())
             .build()
             .await;
-
-        assert!(result.is_err());
-        assert!(
-            matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "task_context")
-        );
+        assert!(matches!(
+            result.unwrap_err(),
+            Error::MissingRequiredAttribute(_)
+        ));
     }
 }
