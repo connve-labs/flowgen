@@ -1,6 +1,7 @@
 flow:
   name: salesforce_pubsub_writer
   tasks:
+
     # Subscribe to NATS stream on a given topic.
     - nats_jetstream_subscriber:
         name: "start_subscription"
