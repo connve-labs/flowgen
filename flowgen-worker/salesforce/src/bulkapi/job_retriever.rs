@@ -1,9 +1,7 @@
 use apache_avro::types::Value;
 use apache_avro::{from_avro_datum, Schema};
 use arrow::csv::reader::Format;
-use flowgen_core::event::{
-    generate_subject, Event, EventBuilder, EventData, SenderExt, SubjectSuffix,
-};
+use flowgen_core::event::{Event, EventBuilder, EventData, SenderExt};
 use oauth2::TokenResponse;
 use serde::Deserialize;
 use std::fs::File;
@@ -209,18 +207,13 @@ impl EventHandler {
                             let job_metadata: JobResponse = serde_json::from_str(&resp)
                                 .map_err(|e| Error::SerdeJson { source: e })?;
 
-                            let subject = generate_subject(
-                                job_metadata.object.to_lowercase().as_str(),
-                                Some(SubjectSuffix::Timestamp),
-                            );
-
                             // Process each Arrow record batch and emit as events.
                             for data in csv {
                                 let e = EventBuilder::new()
                                     .data(EventData::ArrowRecordBatch(
                                         data.map_err(|e| Error::Arrow { source: e })?,
                                     ))
-                                    .subject(subject.clone())
+                                    .subject(job_metadata.object.to_lowercase())
                                     .task_id(self.current_task_id)
                                     .task_type(self.task_type)
                                     .build()?;
