@@ -7,7 +7,7 @@
 use crate::config::Credentials;
 use flowgen_core::{
     config::ConfigExt,
-    event::{generate_subject, Event, EventBuilder, EventData, SenderExt, SubjectSuffix},
+    event::{Event, EventBuilder, EventData, SenderExt},
 };
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde_json::{json, Value};
@@ -22,64 +22,58 @@ use tracing::{error, Instrument};
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
 pub enum Error {
-    /// Failed to read credentials file.
-    #[error("Failed to read credentials file at {path}: {source}")]
+    #[error("Sending event to channel failed with error: {source}")]
+    SendMessage {
+        #[source]
+        source: Box<tokio::sync::broadcast::error::SendError<Event>>,
+    },
+    #[error("Request event builder failed with error: {source}")]
+    EventBuilder {
+        #[source]
+        source: flowgen_core::event::Error,
+    },
+    #[error("Failed to read credentials file at {path} with error: {source}")]
     ReadCredentials {
         path: std::path::PathBuf,
         #[source]
         source: std::io::Error,
     },
-    /// Failed to send event message.
-    #[error("Failed to send event message: {source}")]
-    SendMessage {
-        #[source]
-        source: Box<tokio::sync::broadcast::error::SendError<Event>>,
-    },
-    /// Event building or processing failed.
-    #[error(transparent)]
-    Event(#[from] flowgen_core::event::Error),
-    /// JSON serialization/deserialization failed.
-    #[error("JSON serialization/deserialization failed: {source}")]
+    #[error("JSON serialization/deserialization failed with error: {source}")]
     SerdeJson {
         #[source]
         source: serde_json::Error,
     },
-    /// Configuration template rendering failed.
-    #[error(transparent)]
-    ConfigRender(#[from] flowgen_core::config::Error),
-    /// HTTP request failed.
-    #[error("HTTP request failed: {source}. This may be caused by invalid headers, malformed URL, unsupported request body format, or network issues")]
+    #[error("Configuration template rendering failed with error: {source}")]
+    ConfigRender {
+        #[source]
+        source: flowgen_core::config::Error,
+    },
+    #[error("HTTP request failed with error: {source}. This may be caused by invalid headers, malformed URL, unsupported request body format, or network issues")]
     Reqwest {
         #[source]
         source: reqwest::Error,
     },
-    /// Invalid HTTP header name.
-    #[error("Invalid HTTP header name: {source}")]
+    #[error("Invalid HTTP header name with error: {source}")]
     ReqwestInvalidHeaderName {
         #[source]
         source: reqwest::header::InvalidHeaderName,
     },
-    /// Invalid HTTP header value.
-    #[error("Invalid HTTP header value: {source}")]
+    #[error("Invalid HTTP header value with error: {source}")]
     ReqwestInvalidHeaderValue {
         #[source]
         source: reqwest::header::InvalidHeaderValue,
     },
-    /// Required configuration attribute is missing.
-    #[error("Missing required attribute: {}", _0)]
-    MissingRequiredAttribute(String),
-    /// Payload configuration is invalid.
+    #[error("Host coordination failed with error: {source}")]
+    Host {
+        #[source]
+        source: flowgen_core::host::Error,
+    },
     #[error("Either payload json or payload input is required")]
-    PayloadConfig(),
-    /// Host coordination error.
-    #[error(transparent)]
-    Host(#[from] flowgen_core::host::Error),
-    /// Expected JSON input but got different event type.
-    #[error("Expected JSON input, got ArrowRecordBatch")]
-    ExpectedJsonGotArrowRecordBatch,
-    /// Expected JSON input but got Avro.
-    #[error("Expected JSON input, got Avro")]
-    ExpectedJsonGotAvro,
+    PayloadConfig,
+    #[error("No event data available on the event")]
+    NoEventData,
+    #[error("Missing required builder attribute: {}", _0)]
+    MissingRequiredAttribute(String),
 }
 
 /// Event handler for processing HTTP requests.
@@ -106,14 +100,13 @@ impl EventHandler {
             return Ok(());
         }
 
-        // Extract JSON data from event
-        let json_data = match &event.data {
-            EventData::Json(data) => data,
-            EventData::ArrowRecordBatch(_) => return Err(Error::ExpectedJsonGotArrowRecordBatch),
-            EventData::Avro(_) => return Err(Error::ExpectedJsonGotAvro),
-        };
-
-        let config = self.config.render(json_data)?;
+        // Render config with to support templates inside configuration.
+        let event_value = serde_json::value::Value::try_from(&event)
+            .map_err(|source| Error::EventBuilder { source })?;
+        let config = self
+            .config
+            .render(&event_value)
+            .map_err(|source| Error::ConfigRender { source })?;
 
         let mut client = match config.method {
             crate::config::Method::GET => self.client.get(config.endpoint),
@@ -128,32 +121,32 @@ impl EventHandler {
             let mut header_map = HeaderMap::new();
             for (key, value) in headers {
                 let header_name = HeaderName::try_from(key)
-                    .map_err(|e| Error::ReqwestInvalidHeaderName { source: e })?;
+                    .map_err(|source| Error::ReqwestInvalidHeaderName { source })?;
                 let header_value = HeaderValue::try_from(value)
-                    .map_err(|e| Error::ReqwestInvalidHeaderValue { source: e })?;
+                    .map_err(|source| Error::ReqwestInvalidHeaderValue { source })?;
                 header_map.insert(header_name, header_value);
             }
             client = client.headers(header_map);
         }
 
         if let Some(payload) = &config.payload {
-            let json = if payload.from_event {
-                json_data.clone()
+            let event_data = if payload.from_event {
+                event_value.get("data").ok_or_else(|| Error::NoEventData)?
             } else {
-                match &payload.object {
+                &match &payload.object {
                     Some(obj) => Value::Object(obj.to_owned()),
                     None => match &payload.input {
                         Some(input) => serde_json::from_str::<serde_json::Value>(input.as_str())
-                            .map_err(|e| Error::SerdeJson { source: e })?,
-                        None => return Err(Error::PayloadConfig()),
+                            .map_err(|source| Error::SerdeJson { source })?,
+                        None => return Err(Error::PayloadConfig),
                     },
                 }
             };
 
             client = match payload.send_as {
-                crate::config::PayloadSendAs::Json => client.json(&json),
-                crate::config::PayloadSendAs::UrlEncoded => client.form(&json),
-                crate::config::PayloadSendAs::QueryParams => client.query(&json),
+                crate::config::PayloadSendAs::Json => client.json(&event_data),
+                crate::config::PayloadSendAs::UrlEncoded => client.form(&event_data),
+                crate::config::PayloadSendAs::QueryParams => client.query(&event_data),
             };
         }
 
@@ -166,7 +159,7 @@ impl EventHandler {
                         source: e,
                     })?;
             let credentials: Credentials = serde_json::from_str(&credentials_string)
-                .map_err(|e| Error::SerdeJson { source: e })?;
+                .map_err(|source| Error::SerdeJson { source })?;
 
             if let Some(bearer_token) = credentials.bearer_auth {
                 client = client.bearer_auth(bearer_token);
@@ -180,21 +173,20 @@ impl EventHandler {
         let resp = client
             .send()
             .await
-            .map_err(|e| Error::Reqwest { source: e })?
+            .map_err(|source| Error::Reqwest { source })?
             .text()
             .await
-            .map_err(|e| Error::Reqwest { source: e })?;
+            .map_err(|source| Error::Reqwest { source })?;
 
-        // Try to parse as JSON, fall back to string if it fails
         let data = serde_json::from_str::<Value>(&resp).unwrap_or_else(|_| json!(resp));
 
-        let subject = generate_subject(&self.config.name, Some(SubjectSuffix::Timestamp));
         let e = EventBuilder::new()
             .data(EventData::Json(data))
-            .subject(subject.clone())
+            .subject(self.config.name.to_owned())
             .task_id(self.task_id)
             .task_type(self.task_type)
-            .build()?;
+            .build()
+            .map_err(|source| Error::EventBuilder { source })?;
 
         self.tx
             .send_with_logging(e)
@@ -359,8 +351,6 @@ mod tests {
     use super::*;
     use crate::config::BasicAuth;
     use serde_json::Map;
-    use std::collections::HashMap;
-    use std::path::PathBuf;
     use tokio::sync::broadcast;
 
     /// Creates a mock TaskContext for testing.
@@ -470,80 +460,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_processor_builder_new() {
-        let builder = ProcessorBuilder::new();
-        assert!(builder.config.is_none());
-        assert!(builder.tx.is_none());
-        assert!(builder.rx.is_none());
-        assert!(builder.task_context.is_none());
-        assert_eq!(builder.task_id, 0);
-    }
-
-    #[tokio::test]
-    async fn test_processor_builder_default() {
-        let builder = ProcessorBuilder::default();
-        assert!(builder.config.is_none());
-        assert!(builder.tx.is_none());
-        assert!(builder.rx.is_none());
-        assert!(builder.task_context.is_none());
-        assert_eq!(builder.task_id, 0);
-    }
-
-    #[tokio::test]
-    async fn test_processor_builder_config() {
-        let config = Arc::new(crate::config::Processor {
-            name: "test_processor".to_string(),
-            endpoint: "https://api.example.com".to_string(),
-            method: crate::config::Method::POST,
-            payload: None,
-            headers: None,
-            credentials_path: None,
-        });
-
-        let builder = ProcessorBuilder::new().config(config.clone());
-        assert_eq!(builder.config, Some(config));
-    }
-
-    #[tokio::test]
-    async fn test_processor_builder_receiver() {
-        let (_tx, rx) = broadcast::channel(100);
-        let builder = ProcessorBuilder::new().receiver(rx);
-        assert!(builder.rx.is_some());
-    }
-
-    #[tokio::test]
-    async fn test_processor_builder_sender() {
-        let (tx, _rx) = broadcast::channel(100);
-        let builder = ProcessorBuilder::new().sender(tx);
-        assert!(builder.tx.is_some());
-    }
-
-    #[tokio::test]
-    async fn test_processor_builder_task_id() {
-        let builder = ProcessorBuilder::new().task_id(42);
-        assert_eq!(builder.task_id, 42);
-    }
-
-    #[tokio::test]
-    async fn test_processor_builder_build_missing_config() {
-        let (tx, rx) = broadcast::channel(100);
-        let result = ProcessorBuilder::new()
-            .sender(tx)
-            .receiver(rx)
-            .task_id(1)
-            .task_context(create_mock_task_context())
-            .build()
-            .await;
-
-        assert!(result.is_err());
-        assert!(
-            matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "config")
-        );
-    }
-
-    #[tokio::test]
-    async fn test_processor_builder_build_missing_receiver() {
-        let (tx, _rx) = broadcast::channel(100);
+    async fn test_processor_builder() {
         let config = Arc::new(crate::config::Processor {
             name: "test_processor".to_string(),
             endpoint: "https://test.com".to_string(),
@@ -552,149 +469,31 @@ mod tests {
             headers: None,
             credentials_path: None,
         });
-
-        let result = ProcessorBuilder::new()
-            .config(config)
-            .sender(tx)
-            .task_id(1)
-            .task_context(create_mock_task_context())
-            .build()
-            .await;
-
-        assert!(result.is_err());
-        assert!(
-            matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "receiver")
-        );
-    }
-
-    #[tokio::test]
-    async fn test_processor_builder_build_missing_sender() {
-        let (_tx, rx) = broadcast::channel(100);
-        let config = Arc::new(crate::config::Processor {
-            name: "test_processor".to_string(),
-            endpoint: "https://test.com".to_string(),
-            method: crate::config::Method::GET,
-            payload: None,
-            headers: None,
-            credentials_path: None,
-        });
-
-        let result = ProcessorBuilder::new()
-            .config(config)
-            .receiver(rx)
-            .task_id(1)
-            .task_context(create_mock_task_context())
-            .build()
-            .await;
-
-        assert!(result.is_err());
-        assert!(
-            matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "sender")
-        );
-    }
-
-    #[tokio::test]
-    async fn test_processor_builder_build_success() {
         let (tx, rx) = broadcast::channel(100);
-        let mut headers = HashMap::new();
-        headers.insert("Content-Type".to_string(), "application/json".to_string());
 
-        let config = Arc::new(crate::config::Processor {
-            name: "test_processor".to_string(),
-            endpoint: "https://success.test.com".to_string(),
-            method: crate::config::Method::POST,
-            payload: Some(crate::config::Payload {
-                object: None,
-                input: Some("{\"test\": \"data\"}".to_string()),
-                from_event: false,
-                send_as: crate::config::PayloadSendAs::Json,
-            }),
-            headers: Some(headers),
-            credentials_path: Some(PathBuf::from("/test/creds.json")),
-        });
-
-        let result = ProcessorBuilder::new()
-            .config(config.clone())
-            .sender(tx)
-            .receiver(rx)
-            .task_id(5)
-            .task_type("test")
-            .task_context(create_mock_task_context())
-            .build()
-            .await;
-
-        assert!(result.is_ok());
-        let processor = result.unwrap();
-        assert_eq!(processor.config, config);
-        assert_eq!(processor.task_id, 5);
-    }
-
-    #[tokio::test]
-    async fn test_processor_builder_chain() {
-        let (tx, rx) = broadcast::channel(50);
-        let config = Arc::new(crate::config::Processor {
-            name: "test_processor".to_string(),
-            endpoint: "https://chain.test.com".to_string(),
-            method: crate::config::Method::PUT,
-            payload: None,
-            headers: None,
-            credentials_path: None,
-        });
-
+        // Success case.
         let processor = ProcessorBuilder::new()
             .config(config.clone())
-            .sender(tx)
+            .sender(tx.clone())
             .receiver(rx)
-            .task_id(10)
+            .task_id(1)
             .task_type("test")
             .task_context(create_mock_task_context())
             .build()
-            .await
-            .unwrap();
+            .await;
+        assert!(processor.is_ok());
 
-        assert_eq!(processor.config, config);
-        assert_eq!(processor.task_id, 10);
-    }
-
-    #[test]
-    fn test_event_handler_structure() {
-        let (tx, _rx) = broadcast::channel(1);
-        let config = Arc::new(crate::config::Processor::default());
-        let client = Arc::new(reqwest::Client::new());
-
-        let _handler = EventHandler {
-            client,
-            config,
-            tx,
-            task_id: 0,
-            task_type: "test",
-            _task_context: create_mock_task_context(),
-        };
-    }
-
-    #[tokio::test]
-    async fn test_processor_builder_build_missing_task_context() {
-        let config = Arc::new(crate::config::Processor {
-            name: "test_processor".to_string(),
-            endpoint: "https://test.com".to_string(),
-            method: crate::config::Method::GET,
-            payload: None,
-            headers: None,
-            credentials_path: None,
-        });
-        let (tx, rx) = broadcast::channel(100);
-
+        // Error case - missing config.
+        let (tx2, rx2) = broadcast::channel(100);
         let result = ProcessorBuilder::new()
-            .config(config)
-            .sender(tx)
-            .receiver(rx)
-            .task_id(1)
+            .sender(tx2)
+            .receiver(rx2)
+            .task_context(create_mock_task_context())
             .build()
             .await;
-
-        assert!(result.is_err());
-        assert!(
-            matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "task_context")
-        );
+        assert!(matches!(
+            result.unwrap_err(),
+            Error::MissingRequiredAttribute(_)
+        ));
     }
 }

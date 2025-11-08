@@ -917,17 +917,6 @@ mod tests {
     }
 
     #[test]
-    fn test_error_convert_processor() {
-        let convert_error = flowgen_core::task::convert::processor::Error::MissingRequiredAttribute(
-            "test".to_string(),
-        );
-        let error = Error::ConverProcessor(convert_error);
-
-        let error_str = error.to_string();
-        assert!(error_str.contains("Missing required attribute: test"));
-    }
-
-    #[test]
     fn test_constants() {
         assert_eq!(DEFAULT_EVENT_BUFFER_SIZE, 10_000);
     }

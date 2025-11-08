@@ -7,39 +7,34 @@ use std::path::PathBuf;
 /// Errors during NATS-based cache interaction.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    /// Client authentication or connection error (transparently wraps `crate::client::Error`).
-    #[error(transparent)]
-    ClientAuth(#[from] crate::client::Error),
-    /// KV store entry access/processing error.
-    #[error("KV store entry access failed: {source}")]
+    #[error("NATS client authentication failed with error: {source}")]
+    ClientAuth {
+        #[source]
+        source: crate::client::Error,
+    },
+    #[error("KV store entry access failed with error: {source}")]
     KVEntry {
         #[source]
         source: async_nats::jetstream::kv::EntryError,
     },
-    /// KV store `put` operation error.
-    #[error("KV store put operation failed: {source}")]
+    #[error("KV store put operation failed with error: {source}")]
     KVPut {
         #[source]
         source: async_nats::jetstream::kv::PutError,
     },
-    /// KV bucket creation error.
-    #[error("KV bucket creation failed: {source}")]
+    #[error("KV bucket creation failed with error: {source}")]
     KVBucketCreate {
         #[source]
         source: async_nats::jetstream::context::CreateKeyValueError,
     },
-    /// Expected non-empty buffer from KV store was empty or missing.
     #[error("No value in provided buffer")]
-    EmptyBuffer(),
-    /// KV store not initialized or unexpectedly `None`.
+    EmptyBuffer,
     #[error("Missing required value KV Store")]
-    MissingKVStore(),
-    /// Required configuration attribute missing. Contains attribute name.
-    #[error("Missing required attribute: {}", _0)]
-    MissingRequiredAttribute(String),
-    /// JetStream context was missing or unavailable.
+    MissingKVStore,
     #[error("Missing required value JetStream Context")]
-    MissingJetStreamContext(),
+    MissingJetStreamContext,
+    #[error("Missing required builder attribute: {}", _0)]
+    MissingRequiredAttribute(String),
 }
 
 /// NATS JetStream Key-Value (KV) store cache.
@@ -68,12 +63,14 @@ impl Cache {
         let client = crate::client::ClientBuilder::new()
             .credentials_path(self.credentials_path.clone())
             .build()
-            .map_err(Error::ClientAuth)?
+            .map_err(|source| Error::ClientAuth { source })?
             .connect()
             .await
-            .map_err(Error::ClientAuth)?;
+            .map_err(|source| Error::ClientAuth { source })?;
 
-        let jetstream = client.jetstream.ok_or(Error::MissingJetStreamContext())?;
+        let jetstream = client
+            .jetstream
+            .ok_or_else(|| Error::MissingJetStreamContext)?;
 
         // Get or create KV store.
         let store = match jetstream.get_key_value(bucket).await {
@@ -107,7 +104,7 @@ impl flowgen_core::cache::Cache for Cache {
         let store = self
             .store
             .as_ref()
-            .ok_or_else(|| Box::new(Error::MissingKVStore()) as flowgen_core::cache::Error)?;
+            .ok_or_else(|| Box::new(Error::MissingKVStore) as flowgen_core::cache::Error)?;
         store
             .put(key, value)
             .await
@@ -126,13 +123,13 @@ impl flowgen_core::cache::Cache for Cache {
         let store = self
             .store
             .as_ref()
-            .ok_or_else(|| Box::new(Error::MissingKVStore()) as flowgen_core::cache::Error)?;
+            .ok_or_else(|| Box::new(Error::MissingKVStore) as flowgen_core::cache::Error)?;
         // Map Ok(None) (key not found/empty) from NATS to Error::EmptyBuffer.
         let bytes = store
             .get(key)
             .await
             .map_err(|e| Box::new(Error::KVEntry { source: e }) as flowgen_core::cache::Error)?
-            .ok_or_else(|| Box::new(Error::EmptyBuffer()) as flowgen_core::cache::Error)?;
+            .ok_or_else(|| Box::new(Error::EmptyBuffer) as flowgen_core::cache::Error)?;
         Ok(bytes)
     }
 }

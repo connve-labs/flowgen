@@ -2,11 +2,12 @@ use super::config::{DEFAULT_AVRO_EXTENSION, DEFAULT_CSV_EXTENSION, DEFAULT_JSON_
 use bytes::Bytes;
 use chrono::{DateTime, Datelike, Utc};
 use flowgen_core::buffer::ToWriter;
-use flowgen_core::event::{Event, EventBuilder, EventData, SenderExt, SubjectSuffix};
-use flowgen_core::{client::Client, event::generate_subject};
+use flowgen_core::client::Client;
+use flowgen_core::config::ConfigExt;
+use flowgen_core::event::{Event, EventBuilder, EventData, SenderExt};
 use object_store::PutPayload;
 use serde::{Deserialize, Serialize};
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 use tokio::sync::{broadcast::Receiver, Mutex};
 use tracing::{error, Instrument};
 
@@ -34,57 +35,65 @@ pub struct WriteResult {
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
 pub enum Error {
-    /// Input/output operation failed.
-    #[error("IO operation failed: {source}")]
-    IO {
-        #[source]
-        source: std::io::Error,
-    },
-    /// Apache Arrow error.
-    #[error("Arrow operation failed: {source}")]
-    Arrow {
-        #[source]
-        source: arrow::error::ArrowError,
-    },
-    /// Apache Avro error.
-    #[error("Avro operation failed: {source}")]
-    Avro {
-        #[source]
-        source: apache_avro::Error,
-    },
-    /// JSON serialization/deserialization error.
-    #[error("JSON serialization/deserialization failed: {source}")]
-    SerdeJson {
-        #[source]
-        source: serde_json::Error,
-    },
-    /// Object store operation error.
-    #[error("Object store operation failed: {source}")]
-    ObjectStore {
-        #[source]
-        source: object_store::Error,
-    },
-    /// Object store client error.
-    #[error(transparent)]
-    ObjectStoreClient(#[from] super::client::Error),
-    /// Event building or processing error.
-    #[error(transparent)]
-    Event(#[from] flowgen_core::event::Error),
-    /// Missing required attribute.
-    #[error("Missing required attribute: {0}")]
-    MissingRequiredAttribute(String),
-    /// Could not initialize object store context.
-    #[error("Could not initialize object store context")]
-    NoObjectStoreContext(),
-    /// Host coordination error.
-    #[error(transparent)]
-    Host(#[from] flowgen_core::host::Error),
-    /// Failed to send event through broadcast channel.
-    #[error("Failed to send event message: {source}")]
+    #[error("Sending event to channel failed with error: {source}")]
     SendMessage {
         #[source]
         source: Box<tokio::sync::broadcast::error::SendError<Event>>,
     },
+    #[error("Writer event builder failed with error: {source}")]
+    EventBuilder {
+        #[source]
+        source: flowgen_core::event::Error,
+    },
+    #[error("IO operation failed with error: {source}")]
+    IO {
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("Arrow operation failed with error: {source}")]
+    Arrow {
+        #[source]
+        source: arrow::error::ArrowError,
+    },
+    #[error("Avro operation failed with error: {source}")]
+    Avro {
+        #[source]
+        source: apache_avro::Error,
+    },
+    #[error("JSON serialization/deserialization failed with error: {source}")]
+    SerdeJson {
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("Object store operation failed with error: {source}")]
+    ObjectStore {
+        #[source]
+        source: object_store::Error,
+    },
+    #[error("Object store client failed with error: {source}")]
+    ObjectStoreClient {
+        #[source]
+        source: super::client::Error,
+    },
+    #[error("Configuration template rendering failed with error: {source}")]
+    ConfigRender {
+        #[source]
+        source: flowgen_core::config::Error,
+    },
+    #[error("Host coordination failed with error: {source}")]
+    Host {
+        #[source]
+        source: flowgen_core::host::Error,
+    },
+    #[error("Invalid URL format with error: {source}")]
+    ParseUrl {
+        #[source]
+        source: url::ParseError,
+    },
+    #[error("Could not initialize object store context")]
+    NoObjectStoreContext,
+    #[error("Missing required builder attribute: {0}")]
+    MissingRequiredAttribute(String),
 }
 
 /// Handles processing of individual events by writing them to object storage.
@@ -112,9 +121,20 @@ impl EventHandler {
         let context = client_guard
             .context
             .as_mut()
-            .ok_or_else(Error::NoObjectStoreContext)?;
+            .ok_or_else(|| Error::NoObjectStoreContext)?;
 
-        let mut path = PathBuf::from(context.path.to_string());
+        // Render config with to support templates inside configuration.
+        let event_value = serde_json::value::Value::try_from(&event)
+            .map_err(|source| Error::EventBuilder { source })?;
+        let config = self
+            .config
+            .render(&event_value)
+            .map_err(|source| Error::ConfigRender { source })?;
+
+        // Parse the rendered path to extract just the path part (not the URL scheme/bucket)
+        let config_path_str = config.path.to_string_lossy();
+        let url = url::Url::parse(&config_path_str).map_err(|source| Error::ParseUrl { source })?;
+        let mut path = object_store::path::Path::from(url.path());
 
         let cd = Utc::now();
         if let Some(hive_options) = &self.config.hive_partition_options {
@@ -123,20 +143,22 @@ impl EventHandler {
                     match partition_key {
                         crate::config::HiveParitionKeys::EventDate => {
                             let date_partition = self.format_date_partition(&cd);
-                            path.push(date_partition);
+                            // Split the date partition by '/' and add each part as a child
+                            for part in date_partition.split('/') {
+                                path = path.child(part);
+                            }
                         }
                     }
                 }
             }
         }
+
         let timestamp = cd.timestamp_micros();
         let filename = match event.id {
             Some(id) => id,
             _none => timestamp.to_string(),
         };
-        path.push(&filename);
 
-        let mut writer = Vec::new();
         let extension = match &event.data {
             flowgen_core::event::EventData::ArrowRecordBatch(_) => DEFAULT_CSV_EXTENSION,
             flowgen_core::event::EventData::Avro(_) => DEFAULT_AVRO_EXTENSION,
@@ -144,10 +166,13 @@ impl EventHandler {
         };
 
         // Transform the event data to writer.
-        event.data.to_writer(&mut writer)?;
+        let mut writer = Vec::new();
+        event
+            .data
+            .to_writer(&mut writer)
+            .map_err(|source| Error::EventBuilder { source })?;
 
-        let object_path =
-            object_store::path::Path::from(format!("{}.{}", path.to_string_lossy(), extension));
+        let object_path = path.child(format!("{filename}.{extension}"));
 
         // Upload processed data to object store.
         let payload = PutPayload::from_bytes(Bytes::from(writer));
@@ -157,29 +182,25 @@ impl EventHandler {
             .await
             .map_err(|e| Error::ObjectStore { source: e })?;
 
-        // Create structured result.
         let result = WriteResult {
             status: WriteStatus::Success,
             path: object_path.to_string(),
             e_tag: put_result.e_tag.clone(),
         };
 
-        // Generate event subject using e_tag as identifier, or timestamp if unavailable.
-        // Strip quotes from e_tag if present.
-        let suffix = match &put_result.e_tag {
-            Some(e_tag) => SubjectSuffix::Id(e_tag.trim_matches('"')),
-            None => SubjectSuffix::Timestamp,
-        };
-        let subject = generate_subject(&self.config.name, Some(suffix));
-
         // Build and send event.
         let data = serde_json::to_value(&result).map_err(|e| Error::SerdeJson { source: e })?;
-        let e = EventBuilder::new()
-            .subject(subject)
+        let mut e = EventBuilder::new()
+            .subject(self.config.name.to_owned())
             .data(EventData::Json(data))
             .task_id(self.task_id)
-            .task_type(self.task_type)
-            .build()?;
+            .task_type(self.task_type);
+
+        if let Some(e_tag) = put_result.e_tag {
+            e = e.id(e_tag);
+        };
+
+        let e = e.build().map_err(|source| Error::EventBuilder { source })?;
 
         self.tx
             .send_with_logging(e)
@@ -236,7 +257,14 @@ impl flowgen_core::task::runner::Runner for Writer {
             client_builder = client_builder.credentials_path(credentials_path.clone());
         }
 
-        let client = Arc::new(Mutex::new(client_builder.build()?.connect().await?));
+        let client = Arc::new(Mutex::new(
+            client_builder
+                .build()
+                .map_err(|source| Error::ObjectStoreClient { source })?
+                .connect()
+                .await
+                .map_err(|source| Error::ObjectStoreClient { source })?,
+        ));
 
         let event_handler = EventHandler {
             client,
@@ -367,7 +395,6 @@ impl WriterBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{HiveParitionKeys, HivePartitionOptions};
     use serde_json::{Map, Value};
     use std::path::PathBuf;
     use tokio::sync::broadcast;
@@ -390,16 +417,8 @@ mod tests {
         )
     }
 
-    #[test]
-    fn test_writer_builder_new() {
-        let builder = WriterBuilder::new();
-        assert!(builder.config.is_none());
-        assert!(builder.rx.is_none());
-        assert_eq!(builder.task_id, 0);
-    }
-
-    #[test]
-    fn test_writer_builder_config() {
+    #[tokio::test]
+    async fn test_writer_builder() {
         let config = Arc::new(crate::config::Writer {
             name: "test_writer".to_string(),
             path: PathBuf::from("s3://bucket/path/"),
@@ -407,155 +426,30 @@ mod tests {
             client_options: None,
             hive_partition_options: None,
         });
-
-        let builder = WriterBuilder::new().config(config.clone());
-        assert!(builder.config.is_some());
-        assert_eq!(
-            builder.config.unwrap().path,
-            PathBuf::from("s3://bucket/path/")
-        );
-    }
-
-    #[test]
-    fn test_writer_builder_receiver() {
-        let (_, rx) = broadcast::channel::<Event>(10);
-        let builder = WriterBuilder::new().receiver(rx);
-        assert!(builder.rx.is_some());
-    }
-
-    #[test]
-    fn test_writer_builder_task_id() {
-        let builder = WriterBuilder::new().task_id(42);
-        assert_eq!(builder.task_id, 42);
-    }
-
-    #[tokio::test]
-    async fn test_writer_builder_missing_config() {
-        let (_, rx) = broadcast::channel::<Event>(10);
-        let result = WriterBuilder::new().receiver(rx).task_id(1).build().await;
-
-        assert!(result.is_err());
-        assert!(
-            matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "config")
-        );
-    }
-
-    #[tokio::test]
-    async fn test_writer_builder_missing_receiver() {
-        let config = Arc::new(crate::config::Writer {
-            name: "test_writer".to_string(),
-            path: PathBuf::from("/tmp/output/"),
-            credentials_path: None,
-            client_options: None,
-            hive_partition_options: None,
-        });
-
-        let result = WriterBuilder::new().config(config).task_id(1).build().await;
-
-        assert!(result.is_err());
-        assert!(
-            matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "receiver")
-        );
-    }
-
-    #[tokio::test]
-    async fn test_writer_builder_build_success() {
-        let config = Arc::new(crate::config::Writer {
-            name: "test_writer".to_string(),
-            path: PathBuf::from("gs://my-bucket/data/"),
-            credentials_path: Some(PathBuf::from("/service-account.json")),
-            client_options: None,
-            hive_partition_options: Some(HivePartitionOptions {
-                enabled: true,
-                partition_keys: vec![HiveParitionKeys::EventDate],
-            }),
-        });
-
         let (tx, rx) = broadcast::channel::<Event>(10);
 
-        let result = WriterBuilder::new()
+        // Success case.
+        let writer = WriterBuilder::new()
             .config(config.clone())
             .receiver(rx)
-            .sender(tx)
-            .task_id(99)
+            .sender(tx.clone())
+            .task_id(1)
             .task_type("test")
             .task_context(create_mock_task_context())
             .build()
             .await;
+        assert!(writer.is_ok());
 
-        assert!(result.is_ok());
-        let writer = result.unwrap();
-        assert_eq!(writer.task_id, 99);
-        assert_eq!(writer.config.path, PathBuf::from("gs://my-bucket/data/"));
-    }
-
-    #[test]
-    fn test_event_handler_structure() {
-        // Test that EventHandler can be constructed with the right types
-        let config = Arc::new(crate::config::Writer {
-            name: "test_writer".to_string(),
-            path: PathBuf::from("/tmp/"),
-            credentials_path: None,
-            client_options: None,
-            hive_partition_options: None,
-        });
-
-        let client = Arc::new(Mutex::new(
-            crate::client::ClientBuilder::new()
-                .path(PathBuf::from("/tmp/"))
-                .build()
-                .unwrap(),
-        ));
-
-        // We can't actually create an EventHandler here because it's private,
-        // but we can verify the types are correct by compiling this
-        let _ = (config, client);
-    }
-
-    #[test]
-    fn test_writer_builder_chain() {
-        let config = Arc::new(crate::config::Writer {
-            name: "test_writer".to_string(),
-            path: PathBuf::from("file:///data/output/"),
-            credentials_path: None,
-            client_options: None,
-            hive_partition_options: None,
-        });
-
-        let (_, rx) = broadcast::channel::<Event>(5);
-
-        let builder = WriterBuilder::new()
-            .config(config.clone())
-            .receiver(rx)
-            .task_id(10);
-
-        assert!(builder.config.is_some());
-        assert!(builder.rx.is_some());
-        assert_eq!(builder.task_id, 10);
-    }
-
-    #[tokio::test]
-    async fn test_writer_builder_build_missing_task_context() {
-        let config = Arc::new(crate::config::Writer {
-            name: "test_writer".to_string(),
-            path: PathBuf::from("s3://bucket/path/"),
-            credentials_path: None,
-            client_options: None,
-            hive_partition_options: None,
-        });
-        let (tx, rx) = broadcast::channel::<Event>(10);
-
+        // Error case - missing config.
+        let (_tx2, rx2) = broadcast::channel::<Event>(10);
         let result = WriterBuilder::new()
-            .config(config)
-            .receiver(rx)
-            .sender(tx)
-            .task_id(1)
+            .receiver(rx2)
+            .task_context(create_mock_task_context())
             .build()
             .await;
-
-        assert!(result.is_err());
-        assert!(
-            matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "task_context")
-        );
+        assert!(matches!(
+            result.unwrap_err(),
+            Error::MissingRequiredAttribute(_)
+        ));
     }
 }

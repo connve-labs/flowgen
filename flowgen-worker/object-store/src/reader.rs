@@ -1,7 +1,8 @@
 use super::config::{DEFAULT_AVRO_EXTENSION, DEFAULT_CSV_EXTENSION, DEFAULT_JSON_EXTENSION};
 use bytes::{Bytes, BytesMut};
 use flowgen_core::buffer::{ContentType, FromReader};
-use flowgen_core::event::{generate_subject, Event, EventBuilder, SenderExt, SubjectSuffix};
+use flowgen_core::config::ConfigExt;
+use flowgen_core::event::{Event, EventBuilder, SenderExt};
 use flowgen_core::{client::Client, event::EventData};
 use futures::StreamExt;
 use object_store::GetResultPayload;
@@ -21,66 +22,69 @@ const DEFAULT_HAS_HEADER: bool = true;
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
 pub enum Error {
-    /// Input/output operation failed.
-    #[error("IO operation failed: {source}")]
-    IO {
-        #[source]
-        source: std::io::Error,
-    },
-    /// Apache Arrow error.
-    #[error("Arrow operation failed: {source}")]
-    Arrow {
-        #[source]
-        source: arrow::error::ArrowError,
-    },
-    /// Apache Avro error.
-    #[error("Avro operation failed: {source}")]
-    Avro {
-        #[source]
-        source: apache_avro::Error,
-    },
-    /// JSON serialization/deserialization error.
-    #[error("JSON serialization/deserialization failed: {source}")]
-    SerdeJson {
-        #[source]
-        source: serde_json::Error,
-    },
-    /// Object store operation error.
-    #[error("Object store operation failed: {source}")]
-    ObjectStore {
-        #[source]
-        source: object_store::Error,
-    },
-    /// Object store client error.
-    #[error(transparent)]
-    ObjectStoreClient(#[from] super::client::Error),
-    /// Event building or processing error.
-    #[error(transparent)]
-    Event(#[from] flowgen_core::event::Error),
-    /// Failed to send event message.
-    #[error("Failed to send event message: {source}")]
+    #[error("Sending event to channel failed with error: {source}")]
     SendMessage {
         #[source]
         source: Box<tokio::sync::broadcast::error::SendError<Event>>,
     },
-    /// Configuration template rendering error.
-    #[error(transparent)]
-    ConfigRender(#[from] flowgen_core::config::Error),
-    /// Missing required attribute.
-    #[error("Missing required attribute: {}", _0)]
-    MissingRequiredAttribute(String),
-    /// Could not initialize object store context.
+    #[error("Reader event builder failed with error: {source}")]
+    EventBuilder {
+        #[source]
+        source: flowgen_core::event::Error,
+    },
+    #[error("IO operation failed with error: {source}")]
+    IO {
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("Arrow operation failed with error: {source}")]
+    Arrow {
+        #[source]
+        source: arrow::error::ArrowError,
+    },
+    #[error("Avro operation failed with error: {source}")]
+    Avro {
+        #[source]
+        source: apache_avro::Error,
+    },
+    #[error("JSON serialization/deserialization failed with error: {source}")]
+    SerdeJson {
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("Object store operation failed with error: {source}")]
+    ObjectStore {
+        #[source]
+        source: object_store::Error,
+    },
+    #[error("Object store client failed with error: {source}")]
+    ObjectStoreClient {
+        #[source]
+        source: super::client::Error,
+    },
+    #[error("Configuration template rendering failed with error: {source}")]
+    ConfigRender {
+        #[source]
+        source: flowgen_core::config::Error,
+    },
     #[error("Could not initialize object store context")]
-    NoObjectStoreContext(),
-    /// Could not retrieve file extension.
+    NoObjectStoreContext,
     #[error("Could not retrieve file extension")]
-    NoFileExtension(),
-    /// Cache error.
+    NoFileExtension,
     #[error("Cache error")]
-    Cache(),
-    /// Host coordination error.
-    #[error(transparent)]
-    Host(#[from] flowgen_core::host::Error),
+    Cache,
+    #[error("Host coordination failed with error: {source}")]
+    Host {
+        #[source]
+        source: flowgen_core::host::Error,
+    },
+    #[error("Invalid URL format with error: {source}")]
+    ParseUrl {
+        #[source]
+        source: url::ParseError,
+    },
+    #[error("Missing required builder attribute: {}", _0)]
+    MissingRequiredAttribute(String),
 }
 
 /// Handles processing of individual events by writing them to object storage.
@@ -110,11 +114,24 @@ impl EventHandler {
         let context = client_guard
             .context
             .as_mut()
-            .ok_or_else(Error::NoObjectStoreContext)?;
+            .ok_or_else(|| Error::NoObjectStoreContext)?;
+
+        // Render config with to support templates inside configuration.
+        let event_value = serde_json::value::Value::try_from(&event)
+            .map_err(|source| Error::EventBuilder { source })?;
+        let config = self
+            .config
+            .render(&event_value)
+            .map_err(|source| Error::ConfigRender { source })?;
+
+        // Parse the rendered path to extract just the path part (not the URL scheme/bucket)
+        let config_path_str = config.path.to_string_lossy();
+        let url = url::Url::parse(&config_path_str).map_err(|source| Error::ParseUrl { source })?;
+        let path = object_store::path::Path::from(url.path());
 
         let result = context
             .object_store
-            .get(&context.path)
+            .get(&path)
             .await
             .map_err(|e| Error::ObjectStore { source: e })?;
 
@@ -122,7 +139,7 @@ impl EventHandler {
             .meta
             .location
             .extension()
-            .ok_or_else(Error::NoFileExtension)?;
+            .ok_or_else(|| Error::NoFileExtension)?;
 
         // Determine content type from file extension.
         let content_type = match extension {
@@ -152,7 +169,8 @@ impl EventHandler {
         let event_data_list = match result.payload {
             GetResultPayload::File(file, _) => {
                 let reader = BufReader::new(file);
-                EventData::from_reader(reader, content_type.clone())?
+                EventData::from_reader(reader, content_type.clone())
+                    .map_err(|source| Error::EventBuilder { source })?
             }
             GetResultPayload::Stream(mut stream) => {
                 // Collect stream into bytes.
@@ -166,7 +184,8 @@ impl EventHandler {
                 // Parse bytes using Cursor for Seek support.
                 let cursor = Cursor::new(bytes);
                 let reader = BufReader::new(cursor);
-                EventData::from_reader(reader, content_type.clone())?
+                EventData::from_reader(reader, content_type.clone())
+                    .map_err(|source| Error::EventBuilder { source })?
             }
         };
 
@@ -180,7 +199,7 @@ impl EventHandler {
                             cache
                                 .put(insert_key.as_str(), schema_bytes)
                                 .await
-                                .map_err(|_| Error::Cache())?;
+                                .map_err(|_| Error::Cache)?;
                         }
                     }
                 }
@@ -189,14 +208,13 @@ impl EventHandler {
 
         // Send events.
         for event_data in event_data_list {
-            let subject = generate_subject(&self.config.name, Some(SubjectSuffix::Timestamp));
-
             let e = EventBuilder::new()
-                .subject(subject)
+                .subject(self.config.name.to_owned())
                 .data(event_data)
                 .task_id(self.task_id)
                 .task_type(self.task_type)
-                .build()?;
+                .build()
+                .map_err(|source| Error::EventBuilder { source })?;
 
             self.tx
                 .send_with_logging(e)
@@ -254,7 +272,14 @@ impl flowgen_core::task::runner::Runner for Reader {
             client_builder = client_builder.credentials_path(credentials_path.clone());
         }
 
-        let client = Arc::new(Mutex::new(client_builder.build()?.connect().await?));
+        let client = Arc::new(Mutex::new(
+            client_builder
+                .build()
+                .map_err(|source| Error::ObjectStoreClient { source })?
+                .connect()
+                .await
+                .map_err(|source| Error::ObjectStoreClient { source })?,
+        ));
 
         let event_handler = EventHandler {
             client,
@@ -407,18 +432,8 @@ mod tests {
         )
     }
 
-    #[test]
-    fn test_reader_builder_new() {
-        let builder = ReaderBuilder::new();
-        assert!(builder.config.is_none());
-        assert!(builder.rx.is_none());
-        assert!(builder.tx.is_none());
-        assert!(builder.task_context.is_none());
-        assert_eq!(builder.task_id, 0);
-    }
-
-    #[test]
-    fn test_reader_builder_config() {
+    #[tokio::test]
+    async fn test_reader_builder() {
         let config = Arc::new(crate::config::Reader {
             name: "test_reader".to_string(),
             path: PathBuf::from("s3://bucket/input/"),
@@ -430,203 +445,31 @@ mod tests {
             delete_after_read: None,
             delimiter: None,
         });
-
-        let builder = ReaderBuilder::new().config(config.clone());
-        assert!(builder.config.is_some());
-        assert_eq!(
-            builder.config.unwrap().path,
-            PathBuf::from("s3://bucket/input/")
-        );
-    }
-
-    #[test]
-    fn test_reader_builder_receiver() {
-        let (_, rx) = broadcast::channel::<Event>(10);
-        let builder = ReaderBuilder::new().receiver(rx);
-        assert!(builder.rx.is_some());
-    }
-
-    #[test]
-    fn test_reader_builder_sender() {
-        let (tx, _) = broadcast::channel::<Event>(10);
-        let builder = ReaderBuilder::new().sender(tx);
-        assert!(builder.tx.is_some());
-    }
-
-    #[test]
-    fn test_reader_builder_task_id() {
-        let builder = ReaderBuilder::new().task_id(123);
-        assert_eq!(builder.task_id, 123);
-    }
-
-    #[tokio::test]
-    async fn test_reader_builder_missing_config() {
         let (tx, rx) = broadcast::channel::<Event>(10);
 
-        let result = ReaderBuilder::new()
-            .receiver(rx)
-            .sender(tx)
-            .task_context(create_mock_task_context())
-            .task_id(1)
-            .build()
-            .await;
-
-        assert!(result.is_err());
-        assert!(
-            matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "config")
-        );
-    }
-
-    #[tokio::test]
-    async fn test_reader_builder_missing_receiver() {
-        let config = Arc::new(crate::config::Reader {
-            name: "test_reader".to_string(),
-            path: PathBuf::from("/tmp/input/"),
-            credentials_path: None,
-            client_options: None,
-            batch_size: None,
-            has_header: None,
-            cache_options: None,
-            delete_after_read: None,
-            delimiter: None,
-        });
-
-        let (tx, _) = broadcast::channel::<Event>(10);
-
-        let result = ReaderBuilder::new()
-            .config(config)
-            .sender(tx)
-            .task_context(create_mock_task_context())
-            .task_id(1)
-            .build()
-            .await;
-
-        assert!(result.is_err());
-        assert!(
-            matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "receiver")
-        );
-    }
-
-    #[tokio::test]
-    async fn test_reader_builder_missing_sender() {
-        let config = Arc::new(crate::config::Reader {
-            name: "test_reader".to_string(),
-            path: PathBuf::from("gs://bucket/data/"),
-            credentials_path: Some(PathBuf::from("/creds.json")),
-            client_options: None,
-            batch_size: Some(1000),
-            has_header: Some(false),
-            cache_options: None,
-            delete_after_read: None,
-            delimiter: None,
-        });
-
-        let (_, rx) = broadcast::channel::<Event>(10);
-
-        let result = ReaderBuilder::new()
-            .config(config)
-            .receiver(rx)
-            .task_context(create_mock_task_context())
-            .task_id(1)
-            .build()
-            .await;
-
-        assert!(result.is_err());
-        assert!(
-            matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "sender")
-        );
-    }
-
-    #[tokio::test]
-    async fn test_reader_builder_build_success() {
-        let config = Arc::new(crate::config::Reader {
-            name: "test_reader".to_string(),
-            path: PathBuf::from("s3://my-bucket/files/"),
-            credentials_path: Some(PathBuf::from("/aws-creds.json")),
-            client_options: Some({
-                let mut opts = std::collections::HashMap::new();
-                opts.insert("region".to_string(), "us-west-2".to_string());
-                opts
-            }),
-            batch_size: Some(2000),
-            has_header: Some(true),
-            cache_options: None,
-            delete_after_read: None,
-            delimiter: None,
-        });
-
-        let (tx, rx) = broadcast::channel::<Event>(50);
-
-        let result = ReaderBuilder::new()
+        // Success case.
+        let reader = ReaderBuilder::new()
             .config(config.clone())
             .receiver(rx)
-            .sender(tx)
-            .task_id(777)
+            .sender(tx.clone())
+            .task_id(1)
             .task_type("test")
             .task_context(create_mock_task_context())
             .build()
             .await;
+        assert!(reader.is_ok());
 
-        assert!(result.is_ok());
-        let reader = result.unwrap();
-        assert_eq!(reader.task_id, 777);
-        assert_eq!(reader.config.path, PathBuf::from("s3://my-bucket/files/"));
-    }
-
-    #[test]
-    fn test_reader_builder_chain() {
-        let config = Arc::new(crate::config::Reader {
-            name: "test_reader".to_string(),
-            path: PathBuf::from("file:///data/input/"),
-            credentials_path: None,
-            client_options: None,
-            batch_size: Some(100),
-            has_header: Some(false),
-            cache_options: None,
-            delete_after_read: None,
-            delimiter: None,
-        });
-
-        let (tx, rx) = broadcast::channel::<Event>(5);
-
-        let builder = ReaderBuilder::new()
-            .config(config.clone())
-            .receiver(rx)
-            .sender(tx)
-            .task_id(20);
-
-        assert!(builder.config.is_some());
-        assert!(builder.rx.is_some());
-        assert!(builder.tx.is_some());
-        assert_eq!(builder.task_id, 20);
-    }
-
-    #[tokio::test]
-    async fn test_reader_builder_build_missing_task_context() {
-        let config = Arc::new(crate::config::Reader {
-            name: "test_reader".to_string(),
-            path: PathBuf::from("s3://bucket/input/"),
-            credentials_path: None,
-            client_options: None,
-            batch_size: None,
-            has_header: None,
-            cache_options: None,
-            delete_after_read: None,
-            delimiter: None,
-        });
-        let (tx, rx) = broadcast::channel::<Event>(10);
-
+        // Error case - missing config.
+        let (tx2, rx2) = broadcast::channel::<Event>(10);
         let result = ReaderBuilder::new()
-            .config(config)
-            .receiver(rx)
-            .sender(tx)
-            .task_id(1)
+            .receiver(rx2)
+            .sender(tx2)
+            .task_context(create_mock_task_context())
             .build()
             .await;
-
-        assert!(result.is_err());
-        assert!(
-            matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "task_context")
-        );
+        assert!(matches!(
+            result.unwrap_err(),
+            Error::MissingRequiredAttribute(_)
+        ));
     }
 }

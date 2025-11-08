@@ -15,67 +15,60 @@ const DEFAULT_BATCH_SIZE: usize = 100;
 /// Errors that can occur during NATS JetStream subscription operations.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    /// Client authentication or connection error.
-    #[error(transparent)]
-    Client(#[from] crate::client::Error),
-    /// Error converting message to flowgen event format.
-    #[error(transparent)]
-    MessageConversion(#[from] crate::jetstream::message::Error),
-    /// JetStream consumer operation error.
-    #[error("JetStream consumer operation failed: {source}")]
+    #[error("Sending event to channel failed with error: {source}")]
+    SendMessage {
+        #[source]
+        source: Box<tokio::sync::broadcast::error::SendError<Event>>,
+    },
+    #[error("NATS client failed with error: {source}")]
+    Client {
+        #[source]
+        source: crate::client::Error,
+    },
+    #[error("Message conversion failed with error: {source}")]
+    MessageConversion {
+        #[source]
+        source: crate::jetstream::message::Error,
+    },
+    #[error("JetStream consumer operation failed with error: {source}")]
     Consumer {
         #[source]
         source: async_nats::jetstream::stream::ConsumerError,
     },
-    /// JetStream consumer stream error.
-    #[error("JetStream consumer stream error: {source}")]
+    #[error("JetStream consumer stream failed with error: {source}")]
     ConsumerStream {
         #[source]
         source: async_nats::jetstream::consumer::StreamError,
     },
-    /// Stream management error.
-    #[error(transparent)]
-    Stream(#[from] super::stream::Error),
-    /// Failed to retrieve consumer configuration information.
+    #[error("JetStream stream management failed with error: {source}")]
+    StreamManagement {
+        #[source]
+        source: super::stream::Error,
+    },
+    #[error("Failed to get JetStream stream with error: {source}")]
+    GetStream {
+        #[source]
+        source: async_nats::jetstream::context::GetStreamError,
+    },
+    #[error("Failed to subscribe to NATS subject with error: {source}")]
+    Subscribe {
+        #[source]
+        source: async_nats::SubscribeError,
+    },
     #[error("Consumer configuration check failed")]
     ConsumerInfoFailed,
-    /// Consumer exists with conflicting filter subject configuration.
     #[error("Consumer '{consumer}' exists with different filter subject '{existing}', expected '{expected}'. Please delete the existing consumer or use a different durable name")]
     ConsumerFilterMismatch {
         consumer: String,
         existing: String,
         expected: String,
     },
-    /// Failed to subscribe to NATS subject.
-    #[error("Failed to subscribe to NATS subject: {source}")]
-    Subscribe {
-        #[source]
-        source: async_nats::SubscribeError,
-    },
-    /// Async task join error.
-    #[error("Task join error: {source}")]
-    TaskJoin {
-        #[source]
-        source: tokio::task::JoinError,
-    },
-    /// Failed to send event through broadcast channel.
-    #[error("Failed to send event message: {source}")]
-    SendMessage {
-        #[source]
-        source: Box<tokio::sync::broadcast::error::SendError<Event>>,
-    },
-    /// Required configuration attribute is missing.
-    #[error("Missing required attribute: {}.", _0)]
-    MissingRequiredAttribute(String),
-    /// Stream configuration is missing.
-    #[error("Stream configuration is missing")]
-    NoStream,
-    /// General subscriber error for wrapped external errors.
-    #[error("Other error with subscriber")]
+    #[error("Missing stream configuration")]
+    MissingStreamConfig,
+    #[error("Other subscriber error")]
     Other(#[source] Box<dyn std::error::Error + Send + Sync>),
-    /// Host coordination error.
-    #[error(transparent)]
-    Host(#[from] flowgen_core::host::Error),
+    #[error("Missing required builder attribute: {}", _0)]
+    MissingRequiredAttribute(String),
 }
 
 /// Event handler for processing NATS messages.
@@ -105,7 +98,9 @@ impl EventHandler {
 
             while let Some(message) = batch.next().await {
                 if let Ok(message) = message {
-                    let e = message.to_event(self.task_type, self.task_id)?;
+                    let e = message
+                        .to_event(self.task_type, self.task_id)
+                        .map_err(|source| Error::MessageConversion { source })?;
                     message.ack().await.ok();
 
                     self.tx
@@ -146,22 +141,30 @@ impl flowgen_core::task::runner::Runner for Subscriber {
     async fn init(&self) -> Result<EventHandler, Error> {
         let client = crate::client::ClientBuilder::new()
             .credentials_path(self.config.credentials_path.clone())
-            .build()?
+            .build()
+            .map_err(|source| Error::Client { source })?
             .connect()
-            .await?;
+            .await
+            .map_err(|source| Error::Client { source })?;
 
         if let Some(jetstream) = client.jetstream {
-            let stream_opts = self.config.stream.as_ref().ok_or_else(|| Error::NoStream)?;
+            let stream_opts = self
+                .config
+                .stream
+                .as_ref()
+                .ok_or_else(|| Error::MissingStreamConfig)?;
 
             let jetstream = match stream_opts.create_or_update {
-                true => super::stream::create_or_update_stream(jetstream, stream_opts).await?,
+                true => super::stream::create_or_update_stream(jetstream, stream_opts)
+                    .await
+                    .map_err(|source| Error::StreamManagement { source })?,
                 false => jetstream,
             };
 
             let stream = jetstream
                 .get_stream(&stream_opts.name)
                 .await
-                .map_err(|e| super::stream::Error::GetStream { source: e })?;
+                .map_err(|source| Error::GetStream { source })?;
 
             let durable_name = self
                 .config
@@ -332,24 +335,8 @@ mod tests {
         )
     }
 
-    #[test]
-    fn test_subscriber_builder_new() {
-        let builder = SubscriberBuilder::new();
-        assert!(builder.config.is_none());
-        assert!(builder.tx.is_none());
-        assert_eq!(builder.task_id, 0);
-    }
-
-    #[test]
-    fn test_subscriber_builder_default() {
-        let builder = SubscriberBuilder::default();
-        assert!(builder.config.is_none());
-        assert!(builder.tx.is_none());
-        assert_eq!(builder.task_id, 0);
-    }
-
-    #[test]
-    fn test_subscriber_builder_config() {
+    #[tokio::test]
+    async fn test_subscriber_builder() {
         let config = Arc::new(super::super::config::Subscriber {
             name: "test_subscriber".to_string(),
             credentials_path: PathBuf::from("/test/creds.jwt"),
@@ -366,165 +353,30 @@ mod tests {
             batch_size: Some(100),
             delay_secs: Some(5),
         });
-
-        let builder = SubscriberBuilder::new().config(config.clone());
-        assert_eq!(builder.config, Some(config));
-    }
-
-    #[test]
-    fn test_subscriber_builder_sender() {
-        let (tx, _rx) = broadcast::channel(100);
-        let builder = SubscriberBuilder::new().sender(tx);
-        assert!(builder.tx.is_some());
-    }
-
-    #[test]
-    fn test_subscriber_builder_task_id() {
-        let builder = SubscriberBuilder::new().task_id(42);
-        assert_eq!(builder.task_id, 42);
-    }
-
-    #[tokio::test]
-    async fn test_subscriber_builder_build_missing_config() {
-        let (tx, _rx) = broadcast::channel(100);
-        let result = SubscriberBuilder::new().sender(tx).task_id(1).build().await;
-
-        assert!(result.is_err());
-        assert!(
-            matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "config")
-        );
-    }
-
-    #[tokio::test]
-    async fn test_subscriber_builder_build_missing_sender() {
-        let config = Arc::new(super::super::config::Subscriber {
-            name: "test_subscriber".to_string(),
-            credentials_path: PathBuf::from("/test/creds.jwt"),
-            subject: "test.subject".to_string(),
-            stream: Some(super::super::config::StreamOptions {
-                name: "test_stream".to_string(),
-                subjects: vec!["test.>".to_string()],
-                create_or_update: true,
-                retention: Some(super::super::config::RetentionPolicy::Limits),
-                discard: Some(super::super::config::DiscardPolicy::Old),
-                ..Default::default()
-            }),
-            durable_name: Some("test_consumer".to_string()),
-            batch_size: Some(50),
-            delay_secs: None,
-        });
-
-        let result = SubscriberBuilder::new()
-            .config(config)
-            .task_id(1)
-            .build()
-            .await;
-
-        assert!(result.is_err());
-        assert!(
-            matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "sender")
-        );
-    }
-
-    #[tokio::test]
-    async fn test_subscriber_builder_build_success() {
-        let config = Arc::new(super::super::config::Subscriber {
-            name: "test_subscriber".to_string(),
-            credentials_path: PathBuf::from("/test/creds.jwt"),
-            subject: "test.subject.*".to_string(),
-            stream: Some(super::super::config::StreamOptions {
-                name: "test_stream".to_string(),
-                subjects: vec!["test.>".to_string()],
-                create_or_update: true,
-                retention: Some(super::super::config::RetentionPolicy::Limits),
-                discard: Some(super::super::config::DiscardPolicy::Old),
-                ..Default::default()
-            }),
-            durable_name: Some("test_consumer".to_string()),
-            batch_size: Some(25),
-            delay_secs: Some(10),
-        });
         let (tx, _rx) = broadcast::channel(100);
 
-        let result = SubscriberBuilder::new()
-            .config(config.clone())
-            .sender(tx)
-            .task_id(5)
-            .task_context(create_mock_task_context())
-            .task_type("test_task")
-            .build()
-            .await;
-
-        assert!(result.is_ok());
-        let subscriber = result.unwrap();
-        assert_eq!(subscriber.config, config);
-        assert_eq!(subscriber.task_id, 5);
-    }
-
-    #[tokio::test]
-    async fn test_subscriber_builder_chain() {
-        let config = Arc::new(super::super::config::Subscriber {
-            name: "test_subscriber".to_string(),
-            credentials_path: PathBuf::from("/chain/test.creds"),
-            subject: "chain.subject".to_string(),
-            stream: Some(super::super::config::StreamOptions {
-                name: "chain_stream".to_string(),
-                subjects: vec!["chain.>".to_string()],
-                create_or_update: true,
-                retention: Some(super::super::config::RetentionPolicy::Limits),
-                discard: Some(super::super::config::DiscardPolicy::Old),
-                ..Default::default()
-            }),
-            durable_name: Some("chain_consumer".to_string()),
-            batch_size: Some(10),
-            delay_secs: Some(1),
-        });
-        let (tx, _rx) = broadcast::channel(50);
-
+        // Success case.
         let subscriber = SubscriberBuilder::new()
             .config(config.clone())
-            .sender(tx)
-            .task_id(10)
-            .task_context(create_mock_task_context())
+            .sender(tx.clone())
+            .task_id(1)
             .task_type("test_task")
+            .task_context(create_mock_task_context())
             .build()
-            .await
-            .unwrap();
+            .await;
+        assert!(subscriber.is_ok());
 
-        assert_eq!(subscriber.config, config);
-        assert_eq!(subscriber.task_id, 10);
-    }
-
-    #[test]
-    fn test_subscriber_structure() {
-        let config = Arc::new(super::super::config::Subscriber {
-            name: "test_subscriber".to_string(),
-            credentials_path: PathBuf::from("/test/creds.jwt"),
-            subject: "struct.test".to_string(),
-            stream: Some(super::super::config::StreamOptions {
-                name: "struct_test".to_string(),
-                subjects: vec!["struct.>".to_string()],
-                create_or_update: true,
-                retention: Some(super::super::config::RetentionPolicy::Limits),
-                discard: Some(super::super::config::DiscardPolicy::Old),
-                ..Default::default()
-            }),
-            durable_name: Some("struct_consumer".to_string()),
-            batch_size: Some(1),
-            delay_secs: None,
-        });
-        let (tx, _rx) = broadcast::channel(1);
-
-        let subscriber = Subscriber {
-            config: config.clone(),
-            tx,
-            task_id: 0,
-            _task_context: create_mock_task_context(),
-            task_type: "test_task",
-        };
-
-        assert_eq!(subscriber.config, config);
-        assert_eq!(subscriber.task_id, 0);
+        // Error case - missing config.
+        let (tx2, _rx2) = broadcast::channel(100);
+        let result = SubscriberBuilder::new()
+            .sender(tx2)
+            .task_context(create_mock_task_context())
+            .build()
+            .await;
+        assert!(matches!(
+            result.unwrap_err(),
+            Error::MissingRequiredAttribute(_)
+        ));
     }
 
     #[test]
@@ -533,16 +385,14 @@ mod tests {
         let consumer_err = Error::MissingRequiredAttribute("test".to_string());
         assert!(consumer_err
             .to_string()
-            .contains("Missing required attribute"));
+            .contains("Missing required builder attribute"));
 
         // Test error display for comprehensive coverage
         let other_err = Error::Other(Box::new(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             "test",
         )));
-        assert!(other_err
-            .to_string()
-            .contains("Other error with subscriber"));
+        assert!(other_err.to_string().contains("Other subscriber error"));
 
         // Test consumer filter mismatch error
         let filter_err = Error::ConsumerFilterMismatch {

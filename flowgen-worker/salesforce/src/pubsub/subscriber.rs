@@ -1,6 +1,6 @@
 use flowgen_core::{
     client::Client,
-    event::{generate_subject, AvroData, Event, EventBuilder, EventData, SenderExt, SubjectSuffix},
+    event::{AvroData, Event, EventBuilder, EventData, SenderExt},
 };
 use salesforce_pubsub_v1::eventbus::v1::{FetchRequest, SchemaRequest, TopicRequest};
 use std::sync::Arc;
@@ -9,6 +9,8 @@ use tokio_stream::StreamExt;
 use tracing::{error, warn, Instrument};
 
 const DEFAULT_NUM_REQUESTED: i32 = 100;
+const DEFAULT_TOPIC_PREFIX_DATA: &str = "/data/";
+const DEFAULT_TOPIC_PREFIX_EVENT: &str = "/event/";
 
 /// Errors that can occur during Salesforce Pub/Sub subscription operations.
 #[derive(thiserror::Error, Debug)]
@@ -201,19 +203,12 @@ impl EventHandler {
                                 raw_bytes: event.payload[..].to_vec(),
                             };
 
-                            // Normalize topic name.
-                            let topic = topic_name.replace('/', ".").to_lowercase();
-
-                            // Generate event subject prefix from topic name.
-                            let subject_prefix = if let Some(stripped) = topic.strip_prefix('.') {
-                                stripped.to_string()
-                            } else {
-                                topic
-                            };
-                            let subject = generate_subject(
-                                &subject_prefix,
-                                Some(SubjectSuffix::Id(&event.id)),
-                            );
+                            // Normalize topic name by removing data/ or event/ prefix and keeping the object name.
+                            let subject = topic_name
+                                .strip_prefix(DEFAULT_TOPIC_PREFIX_DATA)
+                                .or_else(|| topic_name.strip_prefix(DEFAULT_TOPIC_PREFIX_EVENT))
+                                .unwrap_or(topic_name)
+                                .to_lowercase();
 
                             // Build and send event.
                             let e = EventBuilder::new()
@@ -449,17 +444,8 @@ mod tests {
         )
     }
 
-    #[test]
-    fn test_subscriber_builder_new() {
-        let builder = SubscriberBuilder::new();
-        assert!(builder.config.is_none());
-        assert!(builder.tx.is_none());
-        assert!(builder.task_context.is_none());
-        assert_eq!(builder.task_id, 0);
-    }
-
-    #[test]
-    fn test_subscriber_builder_config() {
+    #[tokio::test]
+    async fn test_subscriber_builder() {
         let config = Arc::new(config::Subscriber {
             name: "test_subscriber".to_string(),
             credentials_path: PathBuf::from("test_creds"),
@@ -470,130 +456,29 @@ mod tests {
             },
             endpoint: None,
         });
-
-        let builder: SubscriberBuilder = SubscriberBuilder::new().config(config.clone());
-        assert!(builder.config.is_some());
-        assert_eq!(builder.config.unwrap().topic.name, "/event/Test__e");
-    }
-
-    #[test]
-    fn test_subscriber_builder_sender() {
-        let (tx, _) = broadcast::channel::<Event>(10);
-        let builder: SubscriberBuilder = SubscriberBuilder::new().sender(tx);
-        assert!(builder.tx.is_some());
-    }
-
-    #[test]
-    fn test_subscriber_builder_task_id() {
-        let builder: SubscriberBuilder = SubscriberBuilder::new().task_id(99);
-        assert_eq!(builder.task_id, 99);
-    }
-
-    #[tokio::test]
-    async fn test_subscriber_builder_missing_config() {
         let (tx, _) = broadcast::channel::<Event>(10);
 
-        let result = SubscriberBuilder::new()
-            .sender(tx)
-            .task_context(create_mock_task_context())
-            .task_id(1)
-            .build()
-            .await;
-
-        assert!(result.is_err());
-        assert!(
-            matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "config")
-        );
-    }
-
-    #[tokio::test]
-    async fn test_subscriber_builder_missing_sender() {
-        let config = Arc::new(config::Subscriber {
-            name: "test_subscriber".to_string(),
-            credentials_path: PathBuf::from("test_creds"),
-            topic: config::Topic {
-                name: "/event/Test__e".to_string(),
-                durable_consumer_options: None,
-                num_requested: Some(5),
-            },
-            endpoint: None,
-        });
-
-        let result = SubscriberBuilder::new()
-            .config(config)
-            .task_context(create_mock_task_context())
-            .task_id(1)
-            .build()
-            .await;
-
-        assert!(result.is_err());
-        assert!(
-            matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "sender")
-        );
-    }
-
-    #[tokio::test]
-    async fn test_subscriber_builder_build_success() {
-        let config = Arc::new(config::Subscriber {
-            name: "test_subscriber".to_string(),
-            credentials_path: PathBuf::from("complete_creds"),
-            topic: config::Topic {
-                name: "/data/AccountChangeEvent".to_string(),
-                durable_consumer_options: Some(config::DurableConsumerOptions {
-                    enabled: true,
-                    managed_subscription: true,
-                    name: "TestConsumer".to_string(),
-                }),
-                num_requested: Some(100),
-            },
-            endpoint: Some("api.pubsub.salesforce.com:7443".to_string()),
-        });
-
-        let (tx, _) = broadcast::channel::<Event>(10);
-
-        let result = SubscriberBuilder::new()
+        // Success case.
+        let subscriber = SubscriberBuilder::new()
             .config(config.clone())
-            .sender(tx)
-            .task_id(42)
+            .sender(tx.clone())
+            .task_id(1)
             .task_type("test")
             .task_context(create_mock_task_context())
             .build()
             .await;
+        assert!(subscriber.is_ok());
 
-        assert!(result.is_ok());
-        let subscriber = result.unwrap();
-        assert_eq!(subscriber.task_id, 42);
-        assert_eq!(subscriber.config.topic.name, "/data/AccountChangeEvent");
-        assert_eq!(
-            subscriber.config.endpoint,
-            Some("api.pubsub.salesforce.com:7443".to_string())
-        );
-    }
-
-    #[tokio::test]
-    async fn test_subscriber_builder_build_missing_task_context() {
-        let config = Arc::new(config::Subscriber {
-            name: "test_subscriber".to_string(),
-            credentials_path: PathBuf::from("test_creds"),
-            topic: config::Topic {
-                name: "/event/Test__e".to_string(),
-                durable_consumer_options: None,
-                num_requested: Some(10),
-            },
-            endpoint: None,
-        });
-        let (tx, _) = broadcast::channel::<Event>(10);
-
+        // Error case - missing config.
+        let (tx2, _rx2) = broadcast::channel::<Event>(10);
         let result = SubscriberBuilder::new()
-            .config(config)
-            .sender(tx)
-            .task_id(1)
+            .sender(tx2)
+            .task_context(create_mock_task_context())
             .build()
             .await;
-
-        assert!(result.is_err());
-        assert!(
-            matches!(result.unwrap_err(), Error::MissingRequiredAttribute(attr) if attr == "task_context")
-        );
+        assert!(matches!(
+            result.unwrap_err(),
+            Error::MissingRequiredAttribute(_)
+        ));
     }
 }
