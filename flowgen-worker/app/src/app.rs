@@ -230,6 +230,10 @@ impl App {
                 flow_builder = flow_builder.event_buffer_size(buffer_size);
             }
 
+            if let Some(retry_config) = &app_config.retry {
+                flow_builder = flow_builder.retry(retry_config.clone());
+            }
+
             match flow_builder.build() {
                 Ok(flow) => flows.push(flow),
                 Err(e) => {

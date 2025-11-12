@@ -97,6 +97,9 @@ pub struct Subscriber {
     pub topic: Topic,
     /// Optional Salesforce Pub/Sub endpoint (e.g., "api.pubsub.salesforce.com:7443" or "api.deu.pubsub.salesforce.com:7443").
     pub endpoint: Option<String>,
+    /// Optional retry configuration (overrides app-level retry config).
+    #[serde(default)]
+    pub retry: Option<flowgen_core::retry::RetryConfig>,
 }
 
 /// Configuration structure for Salesforce Pub/Sub topic settings.
@@ -304,6 +307,7 @@ mod tests {
         assert_eq!(subscriber.credentials_path, PathBuf::new());
         assert_eq!(subscriber.topic, Topic::default());
         assert_eq!(subscriber.endpoint, None);
+        assert_eq!(subscriber.retry, None);
     }
 
     #[test]
@@ -321,6 +325,7 @@ mod tests {
                 num_requested: Some(50),
             },
             endpoint: Some("api.pubsub.salesforce.com:7443".to_string()),
+            retry: None,
         };
 
         let json = serde_json::to_string(&subscriber).unwrap();
@@ -414,6 +419,7 @@ mod tests {
                 num_requested: Some(10),
             },
             endpoint: None,
+            retry: None,
         };
 
         let cloned = subscriber.clone();

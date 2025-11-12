@@ -16,63 +16,57 @@ const DEFAULT_TOPIC_PREFIX_EVENT: &str = "/event/";
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
 pub enum Error {
-    /// Pub/Sub context or gRPC communication error.
     #[error("Pub/Sub error: {source}")]
     PubSub {
         #[source]
         source: salesforce_core::pubsub::context::Error,
     },
-    /// Client authentication error.
     #[error("Authentication error: {source}")]
     Auth {
         #[source]
         source: salesforce_core::client::Error,
     },
-    /// Flowgen core event system error.
     #[error("Event error: {source}")]
     Event {
         #[source]
         source: flowgen_core::event::Error,
     },
-    /// Async task join error.
     #[error("Async task join failed: {source}")]
     TaskJoin {
         #[source]
         source: tokio::task::JoinError,
     },
-    /// Failed to send event through broadcast channel.
     #[error("Failed to send event message: {source}")]
     SendMessage {
         #[source]
         source: Box<tokio::sync::broadcast::error::SendError<Event>>,
     },
-    /// Binary encoding or decoding error.
-    #[error("Binary encoding/decoding failed: {source}")]
+    #[error("Binary encoding/decoding failed with error: {source}")]
     Bincode {
         #[source]
         source: bincode::Error,
     },
-    /// Flowgen core service error.
     #[error("Service error: {source}")]
     Service {
         #[source]
         source: flowgen_core::service::Error,
     },
-    /// Required configuration attribute is missing.
     #[error("Missing required attribute: {}", _0)]
     MissingRequiredAttribute(String),
-    /// Cache operation error with descriptive message.
     #[error("Cache error: {_0}")]
     Cache(String),
-    /// JSON serialization or deserialization error.
-    #[error("JSON serialization/deserialization failed: {source}")]
+    #[error("JSON serialization/deserialization failed with error: {source}")]
     Serde {
         #[source]
         source: serde_json::Error,
     },
-    /// Host coordination error.
-    #[error(transparent)]
-    Host(#[from] flowgen_core::host::Error),
+    #[error("Subscriber failed after all retry attempts: {source}")]
+    RetryExhausted {
+        #[source]
+        source: Box<Error>,
+    },
+    #[error("Stream ended unexpectedly, connection may have been lost")]
+    StreamEnded,
 }
 
 /// Processes events from a single Salesforce Pub/Sub topic.
@@ -234,7 +228,7 @@ impl EventHandler {
             }
         }
 
-        Ok(())
+        Err(Error::StreamEnded)
     }
 }
 
@@ -268,7 +262,7 @@ impl flowgen_core::task::runner::Runner for Subscriber {
     /// - Authenticating with Salesforce
     /// - Building Pub/Sub context
     async fn init(&self) -> Result<EventHandler, Error> {
-        // Determine Pub/Sub endpoint
+        // Determine Pub/Sub endpoint.
         let endpoint = match &self.config.endpoint {
             Some(endpoint) => endpoint,
             None => &format!(
@@ -278,7 +272,7 @@ impl flowgen_core::task::runner::Runner for Subscriber {
             ),
         };
 
-        // Create gRPC service connection
+        // Create gRPC service connection.
         let service = flowgen_core::service::ServiceBuilder::new()
             .endpoint(endpoint.to_owned())
             .build()
@@ -291,7 +285,7 @@ impl flowgen_core::task::runner::Runner for Subscriber {
             source: flowgen_core::service::Error::MissingEndpoint(),
         })?;
 
-        // Authenticate with Salesforce
+        // Authenticate with Salesforce.
         let sfdc_client = salesforce_core::client::Builder::new()
             .credentials_path(self.config.credentials_path.clone())
             .build()
@@ -300,12 +294,12 @@ impl flowgen_core::task::runner::Runner for Subscriber {
             .await
             .map_err(|e| Error::Auth { source: e })?;
 
-        // Create Pub/Sub context
+        // Create Pub/Sub context.
         let pubsub = salesforce_core::pubsub::context::Context::new(channel, sfdc_client)
             .map_err(|e| Error::PubSub { source: e })?;
         let pubsub = Arc::new(Mutex::new(pubsub));
 
-        // Create event handler
+        // Create event handler.
         Ok(EventHandler {
             config: Arc::clone(&self.config),
             task_id: self.task_id,
@@ -319,20 +313,36 @@ impl flowgen_core::task::runner::Runner for Subscriber {
     /// Runs the subscriber by initializing and spawning the event handler task.
     #[tracing::instrument(skip(self), fields(task = %self.config.name, task_id = self.task_id, task_type = %self.task_type))]
     async fn run(self) -> Result<(), Error> {
-        // Initialize runner task.
-        let event_handler = match self.init().await {
-            Ok(handler) => handler,
-            Err(e) => {
-                error!("{}", e);
-                return Ok(());
-            }
-        };
+        // Merge app-level and task-level retry config.
+        let retry_config =
+            flowgen_core::retry::RetryConfig::merge(&self._task_context.retry, &self.config.retry);
 
         // Spawn event handler task.
         tokio::spawn(
             async move {
-                if let Err(e) = event_handler.handle().await {
-                    error!("{}", e);
+                // Retry loop with exponential backoff.
+                let result = tokio_retry::Retry::spawn(retry_config.strategy(), || async {
+                    // Initialize task.
+                    let event_handler = match self.init().await {
+                        Ok(handler) => handler,
+                        Err(e) => {
+                            error!("{}", e);
+                            return Err(e);
+                        }
+                    };
+
+                    // Run event handler.
+                    event_handler.handle().await
+                })
+                .await;
+
+                if let Err(e) = result {
+                    error!(
+                        "{}",
+                        Error::RetryExhausted {
+                            source: Box::new(e)
+                        }
+                    );
                 }
             }
             .instrument(tracing::Span::current()),
@@ -455,6 +465,7 @@ mod tests {
                 num_requested: Some(10),
             },
             endpoint: None,
+            retry: None,
         });
         let (tx, _) = broadcast::channel::<Event>(10);
 

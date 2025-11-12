@@ -33,6 +33,8 @@ pub struct TaskContext {
     pub cache: Option<std::sync::Arc<dyn crate::cache::Cache>>,
     /// Optional shared HTTP server for webhook tasks.
     pub http_server: Option<std::sync::Arc<dyn crate::http_server::HttpServer>>,
+    /// Optional app-level retry configuration (can be overridden per task).
+    pub retry: Option<crate::retry::RetryConfig>,
 }
 
 impl std::fmt::Debug for TaskContext {
@@ -45,6 +47,7 @@ impl std::fmt::Debug for TaskContext {
                 "http_server",
                 &self.http_server.as_ref().map(|_| "<HttpServer>"),
             )
+            .field("retry", &self.retry)
             .finish()
     }
 }
@@ -62,6 +65,8 @@ pub struct TaskContextBuilder {
     cache: Option<std::sync::Arc<dyn crate::cache::Cache>>,
     /// Optional shared HTTP server for webhook tasks.
     http_server: Option<std::sync::Arc<dyn crate::http_server::HttpServer>>,
+    /// Optional app-level retry configuration.
+    retry: Option<crate::retry::RetryConfig>,
 }
 
 impl TaskContextBuilder {
@@ -121,6 +126,15 @@ impl TaskContextBuilder {
         self
     }
 
+    /// Sets the app-level retry configuration.
+    ///
+    /// # Arguments
+    /// * `retry` - Retry configuration
+    pub fn retry(mut self, retry: crate::retry::RetryConfig) -> Self {
+        self.retry = Some(retry);
+        self
+    }
+
     /// Builds the TaskContext instance.
     ///
     /// # Errors
@@ -138,6 +152,7 @@ impl TaskContextBuilder {
                 .ok_or_else(|| Error::MissingRequiredAttribute("task_manager".to_string()))?,
             cache: self.cache,
             http_server: self.http_server,
+            retry: self.retry,
         })
     }
 }

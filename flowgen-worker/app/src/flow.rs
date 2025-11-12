@@ -83,6 +83,8 @@ pub struct Flow {
     cache: Option<Arc<dyn flowgen_core::cache::Cache>>,
     /// Event channel buffer size for this flow (from app config or DEFAULT).
     event_buffer_size: Option<usize>,
+    /// Optional app-level retry configuration, passed in from the main application.
+    retry: Option<flowgen_core::retry::RetryConfig>,
     /// The task manager, responsible for leader election. Initialized by `init()`.,
     task_manager: Option<Arc<flowgen_core::task::manager::TaskManager>>,
     /// The shared context for all tasks in this flow. Initialized by `init()`.
@@ -137,13 +139,19 @@ impl Flow {
         }
         let task_manager = Arc::new(task_manager_builder.build().start().await);
 
+        let mut task_context_builder = flowgen_core::task::context::TaskContextBuilder::new()
+            .flow_name(self.config.flow.name.clone())
+            .flow_labels(self.config.flow.labels.clone())
+            .task_manager(Arc::clone(&task_manager))
+            .cache(self.cache.clone())
+            .http_server(self.http_server.clone());
+
+        if let Some(retry_config) = &self.retry {
+            task_context_builder = task_context_builder.retry(retry_config.clone());
+        }
+
         let task_context = Arc::new(
-            flowgen_core::task::context::TaskContextBuilder::new()
-                .flow_name(self.config.flow.name.clone())
-                .flow_labels(self.config.flow.labels.clone())
-                .task_manager(Arc::clone(&task_manager))
-                .cache(self.cache.clone())
-                .http_server(self.http_server.clone())
+            task_context_builder
                 .build()
                 .map_err(|e| Error::MissingRequiredAttribute(e.to_string()))?,
         );
@@ -706,6 +714,8 @@ pub struct FlowBuilder {
     cache: Option<Arc<dyn flowgen_core::cache::Cache>>,
     /// Optional event channel buffer size.
     event_buffer_size: Option<usize>,
+    /// Optional app-level retry configuration.
+    retry: Option<flowgen_core::retry::RetryConfig>,
 }
 
 impl FlowBuilder {
@@ -744,6 +754,12 @@ impl FlowBuilder {
         self
     }
 
+    /// Sets the app-level retry configuration.
+    pub fn retry(mut self, retry: flowgen_core::retry::RetryConfig) -> Self {
+        self.retry = Some(retry);
+        self
+    }
+
     /// Builds a Flow instance from the configured options.
     ///
     /// # Errors
@@ -757,6 +773,7 @@ impl FlowBuilder {
             host: self.host,
             cache: self.cache,
             event_buffer_size: self.event_buffer_size,
+            retry: self.retry,
             task_manager: None,
             task_context: None,
             tx: None,

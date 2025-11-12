@@ -17,6 +17,8 @@ pub mod event;
 pub mod host;
 /// HTTP server trait for task context integration.
 pub mod http_server;
+/// Retry configuration and utilities for task execution.
+pub mod retry;
 /// Custom serialization and deserialization utilities.
 pub mod serde;
 /// Service discovery and connection management.
