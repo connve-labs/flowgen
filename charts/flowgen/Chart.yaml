@@ -1,6 +1,6 @@
 apiVersion: v2
 name: flowgen
-description: A Helm Chart for Flowgen - Data activation with a blast 💥
+description: A Helm Chart for Flowgen
 type: application
 version: 0.1.0
 keywords:
