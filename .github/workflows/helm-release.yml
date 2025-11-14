@@ -8,22 +8,37 @@ on:
       - 'charts/**'
 
 permissions:
-  contents: write
-  pages: write
+  contents: read
 
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Generate Github App token
+        uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ secrets.CI_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.CI_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - name: Checkout flowgen repo
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+          path: flowgen
+
+      - name: Checkout helm repo
+        uses: actions/checkout@v4
+        with:
+          repository: connve-dev/helm
+          token: ${{ steps.app-token.outputs.token }}
+          path: helm-repo
 
       - name: Configure Git
         run: |
-          git config user.name "$GITHUB_ACTOR"
-          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+          git config --global user.name "$GITHUB_ACTOR"
+          git config --global user.email "$GITHUB_ACTOR@users.noreply.github.com"
 
       - name: Install Helm
         uses: azure/setup-helm@v4
@@ -31,6 +46,7 @@ jobs:
           version: v3.14.0
 
       - name: Sync appVersion with Cargo.toml
+        working-directory: flowgen
         run: |
           # Extract version from Cargo.toml
           APP_VERSION=$(cargo metadata --format-version 1 --no-deps | jq -r '.packages[] | select(.name == "flowgen_worker") | .version')
@@ -43,11 +59,26 @@ jobs:
           fi
 
           echo "Updated Chart.yaml appVersion to $APP_VERSION"
+          echo "APP_VERSION=$APP_VERSION" >> $GITHUB_ENV
 
-      - name: Run chart-releaser
-        uses: helm/chart-releaser-action@v1.6.0
-        env:
-          CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
-        with:
-          charts_dir: charts
-          skip_existing: true
+      - name: Package chart
+        working-directory: flowgen
+        run: |
+          helm package charts/flowgen -d ../helm-repo/
+
+      - name: Update Helm repo index
+        working-directory: helm-repo
+        run: |
+          helm repo index . --url https://connve-dev.github.io/helm
+
+      - name: Commit and push to helm repo
+        working-directory: helm-repo
+        run: |
+          git add .
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            CHART_VERSION=$(grep '^version:' ../flowgen/charts/flowgen/Chart.yaml | awk '{print $2}')
+            git commit -m "Release flowgen chart v${CHART_VERSION} (app: v${{ env.APP_VERSION }})"
+            git push
+          fi
