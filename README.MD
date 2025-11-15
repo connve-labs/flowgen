@@ -1,6 +1,6 @@
 # Flowgen
 
-[![CI](https://github.com/connve-dev/flowgen/actions/workflows/test.yml/badge.svg)](https://github.com/connve-dev/flowgen/actions/workflows/test.yml) [![License: MPL 2.0](https://img.shields.io/badge/License-MPL%202.0-brightgreen.svg)](https://opensource.org/licenses/MPL-2.0) [![GitHub release](https://img.shields.io/github/v/release/connve-dev/flowgen)](https://github.com/connve-dev/flowgen/releases)
+[![CI](https://github.com/connve-labs/flowgen/actions/workflows/test.yml/badge.svg)](https://github.com/connve-labs/flowgen/actions/workflows/test.yml) [![License: MPL 2.0](https://img.shields.io/badge/License-MPL%202.0-brightgreen.svg)](https://opensource.org/licenses/MPL-2.0) [![GitHub release](https://img.shields.io/github/v/release/connve-labs/flowgen)](https://github.com/connve-labs/flowgen/releases)
 
 Flowgen is a configuration-based data activation workflow application written in Rust.
 
@@ -15,7 +15,7 @@ Flowgen executes data activation workflows defined in YAML configuration files. 
 Install using Helm:
 
 ```bash
-helm repo add connve https://connve-dev.github.io/helm
+helm repo add connve https://connve-labs.github.io/helm
 helm repo update
 helm install flowgen connve/flowgen --namespace flowgen --create-namespace
 ```
@@ -25,12 +25,12 @@ Chart configuration options are documented in [charts/flowgen/values.yaml](chart
 ### Docker
 
 ```bash
-docker pull ghcr.io/connve-dev/flowgen:latest
+docker pull ghcr.io/connve-labs/flowgen:latest
 
 docker run \
   -v $(pwd)/config.yaml:/etc/app/config.yaml \
   -v $(pwd)/flows:/etc/app/flows \
-  ghcr.io/connve-dev/flowgen:latest
+  ghcr.io/connve-labs/flowgen:latest
 ```
 
 ### Local Development

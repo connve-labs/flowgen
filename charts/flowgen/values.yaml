@@ -4,7 +4,7 @@
 global:
   # Global image configuration
   image:
-    repository: ghcr.io/connve-dev/flowgen
+    repository: ghcr.io/connve-labs/flowgen
     pullPolicy: IfNotPresent
     tag: "latest"
 
