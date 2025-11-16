@@ -3,9 +3,10 @@ flow:
   require_leader_election: "true"
   tasks:
     - generate:
-        name: "account_run_sample_query"
+        name: "generate_jobs"
         interval: 60
         count:  5
+    # Create Salesforce BulkPI Query Job.
     - salesforce_bulkapi_job_creator:
         name: "account_salesforce_query_job"
         credentials_path: "/etc/sfdc/credentials.json"

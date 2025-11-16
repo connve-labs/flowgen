@@ -5,7 +5,6 @@ use std::path::PathBuf;
 /// ```json
 /// {
 ///    "salesforce_bulkapi_job_creator": {
-///    "label": "salesforce_query_job",
 ///         "credentials_path": "/path/to/salesforce_test_creds.json",
 ///         "operation": "query",
 ///         "job": "Select Id from Account",
@@ -20,7 +19,6 @@ use std::path::PathBuf;
 /// ```json
 /// {
 ///    "salesforce_bulkapi_job_creator": {
-///    "label": "salesforce_query_all_job",
 ///         "credentials_path": "/path/to/salesforce_test_creds.json",
 ///         "operation": "queryAll",
 ///         "job": "Select Id from Account",
@@ -33,12 +31,8 @@ use std::path::PathBuf;
 /// Configuration for retrieving existing Salesforce bulk jobs.
 #[derive(PartialEq, Clone, Debug, Default, Deserialize, Serialize)]
 pub struct JobRetriever {
-    /// Human-readable label for this job retriever.
-    pub label: Option<String>,
-
     /// Path to Salesforce authentication credentials.
     pub credentials_path: PathBuf,
-
     /// Salesforce Job Type like query, ingest.
     pub job_type: JobType,
 }
@@ -48,40 +42,26 @@ pub struct JobRetriever {
 pub struct JobCreator {
     /// Unique task identifier.
     pub name: String,
-
-    /// Human-readable label for this job.
-    pub label: Option<String>,
-
     /// Path to Salesforce authentication credentials.
     pub credentials_path: PathBuf,
-
     /// Salesforce Job Type like query, ingest.
     pub job_type: JobType,
-
     /// SOQL query for query/queryAll operations.
     pub query: Option<String>,
-
     /// Salesforce object API name (e.g., "Account", "Contact").
     pub object: Option<String>,
-
     /// Type of bulk operation to perform.
     pub operation: Operation,
-
     /// Output file format (currently only CSV supported).
     pub content_type: Option<ContentType>,
-
     /// Column separator for CSV output.
     pub column_delimiter: Option<ColumnDelimiter>,
-
     /// Line termination style (LF or CRLF).
     pub line_ending: Option<LineEnding>,
-
     /// Assignment rule ID for Case or Lead objects.
     pub assignment_rule_id: Option<String>,
-
     /// External ID field name for upsert operations.
     pub external_id_field_name: Option<String>,
-
     /// Optional retry configuration (overrides app-level retry config).
     #[serde(default)]
     pub retry: Option<flowgen_core::retry::RetryConfig>,
@@ -94,7 +74,6 @@ pub enum JobType {
     #[default]
     #[serde(rename = "query")]
     Query,
-
     /// Ingest Job type.
     #[serde(rename = "ingest")]
     Ingest,
@@ -116,27 +95,21 @@ pub enum Operation {
     #[default]
     #[serde(rename = "query")]
     Query,
-
     /// Query including deleted/archived records.
     #[serde(rename = "queryAll")]
     QueryAll,
-
     /// Create new records.
     #[serde(rename = "insert")]
     Insert,
-
     /// Soft delete (move to recycle bin).
     #[serde(rename = "delete")]
     Delete,
-
     /// Permanently delete records.
     #[serde(rename = "hardDelete")]
     HardDelete,
-
     /// Update existing records.
     #[serde(rename = "update")]
     Update,
-
     /// Insert or update based on external ID.
     #[serde(rename = "upsert")]
     Upsert,
@@ -156,19 +129,14 @@ pub enum ColumnDelimiter {
     #[default]
     #[serde(rename = "COMMA")]
     Comma,
-
     #[serde(rename = "TAB")]
     Tab,
-
     #[serde(rename = "SEMICOLON")]
     Semicolon,
-
     #[serde(rename = "PIPE")]
     Pipe,
-
     #[serde(rename = "CARET")]
     Caret,
-
     #[serde(rename = "BACKQUOTE")]
     Backquote,
 }
@@ -180,7 +148,6 @@ pub enum LineEnding {
     #[default]
     #[serde(rename = "LF")]
     Lf,
-
     /// Windows style (\r\n).
     #[serde(rename = "CRLF")]
     Crlf,
@@ -195,19 +162,15 @@ mod tests {
     #[test]
     fn test_job_retriever_default() {
         let retriever = JobRetriever::default();
-        assert_eq!(retriever.label, None);
         assert_eq!(retriever.credentials_path, PathBuf::new());
     }
 
     #[test]
     fn test_job_retriever_creation() {
         let retriever = JobRetriever {
-            label: Some("test_retriever".to_string()),
             credentials_path: PathBuf::from("/path/to/creds.json"),
             job_type: JobType::Query,
         };
-
-        assert_eq!(retriever.label, Some("test_retriever".to_string()));
         assert_eq!(
             retriever.credentials_path,
             PathBuf::from("/path/to/creds.json")
@@ -217,7 +180,6 @@ mod tests {
     #[test]
     fn test_job_retriever_serialization() {
         let retriever = JobRetriever {
-            label: Some("test_label".to_string()),
             credentials_path: PathBuf::from("/test/path.json"),
             job_type: JobType::Query,
         };
@@ -232,7 +194,6 @@ mod tests {
     fn test_job_creator_default() {
         let creator = JobCreator::default();
         assert_eq!(creator.name, "");
-        assert_eq!(creator.label, None);
         assert_eq!(creator.credentials_path, PathBuf::new());
         assert_eq!(creator.query, None);
         assert_eq!(creator.object, None);
@@ -248,7 +209,6 @@ mod tests {
     fn test_job_creator_query_operation() {
         let creator = JobCreator {
             name: "query_job".to_string(),
-            label: Some("Account Query".to_string()),
             credentials_path: PathBuf::from("/creds.json"),
             query: Some("SELECT Id, Name FROM Account".to_string()),
             job_type: JobType::Query,
@@ -271,7 +231,6 @@ mod tests {
     fn test_job_creator_insert_operation() {
         let creator = JobCreator {
             name: "insert_job".to_string(),
-            label: Some("Insert Contacts".to_string()),
             credentials_path: PathBuf::from("/creds.json"),
             query: None,
             job_type: JobType::Query,
@@ -294,7 +253,6 @@ mod tests {
     fn test_job_creator_upsert_operation() {
         let creator = JobCreator {
             name: "upsert_job".to_string(),
-            label: Some("Upsert Accounts".to_string()),
             credentials_path: PathBuf::from("/creds.json"),
             query: None,
             job_type: JobType::Query,
@@ -497,7 +455,6 @@ mod tests {
     fn test_job_creator_full_serialization() {
         let creator = JobCreator {
             name: "full_job".to_string(),
-            label: Some("Full Job Config".to_string()),
             credentials_path: PathBuf::from("/path/to/creds.json"),
             query: Some("SELECT Id FROM Account".to_string()),
             job_type: JobType::Query,
@@ -521,7 +478,6 @@ mod tests {
     fn test_job_creator_clone() {
         let creator1 = JobCreator {
             name: "clone_test".to_string(),
-            label: Some("Clone Test".to_string()),
             credentials_path: PathBuf::from("/test.json"),
             query: Some("SELECT Id FROM Contact".to_string()),
             job_type: JobType::Query,
@@ -542,7 +498,6 @@ mod tests {
     #[test]
     fn test_job_retriever_clone() {
         let retriever1 = JobRetriever {
-            label: Some("clone_test".to_string()),
             credentials_path: PathBuf::from("/test.json"),
             job_type: JobType::Query,
         };
@@ -565,7 +520,6 @@ mod tests {
         assert_eq!(creator.name, "minimal_job");
         assert_eq!(creator.operation, Operation::Insert);
         assert_eq!(creator.object, Some("Account".to_string()));
-        assert_eq!(creator.label, None);
         assert_eq!(creator.query, None);
     }
 
@@ -573,7 +527,6 @@ mod tests {
     fn test_job_creator_with_assignment_rule() {
         let creator = JobCreator {
             name: "case_job".to_string(),
-            label: Some("Case Assignment".to_string()),
             credentials_path: PathBuf::from("/creds.json"),
             query: None,
             job_type: JobType::Query,

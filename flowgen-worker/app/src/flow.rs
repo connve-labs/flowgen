@@ -655,7 +655,7 @@ async fn spawn_tasks(
                 let task_type = task.as_str();
                 let task: JoinHandle<Result<(), Error>> = tokio::spawn(
                     async move {
-                        flowgen_salesforce::bulkapi::job_creator::ProcessorBuilder::new()
+                        flowgen_salesforce::bulkapi::job_creator::JobCreatorBuilder::new()
                             .config(config)
                             .receiver(rx)
                             .sender(tx)

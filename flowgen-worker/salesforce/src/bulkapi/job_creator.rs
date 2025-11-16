@@ -33,15 +33,17 @@ pub enum Error {
         #[source]
         source: flowgen_core::event::Error,
     },
-    #[error("missing salesforce access token")]
+    #[error("No salesforce access token provided")]
     NoSalesforceAuthToken(),
-    #[error("missing salesforce instance URL")]
+    #[error("No salesforce instance URL provided")]
     NoSalesforceInstanceURL(),
     #[error("Task failed after all retry attempts: {source}")]
     RetryExhausted {
         #[source]
         source: Box<Error>,
     },
+    #[error("Operation not implemented")]
+    NotImplemented(),
 }
 
 /// Request payload for Salesforce bulk query job creation.
@@ -62,17 +64,11 @@ struct QueryJobPayload {
 
 /// Processor for creating Salesforce bulk API jobs.
 pub struct JobCreator {
-    /// Job configuration and authentication details.
     config: Arc<super::config::JobCreator>,
-    /// Broadcast sender for emitting processed events.
     tx: Sender<Event>,
-    /// Broadcast receiver for incoming trigger events.
     rx: Receiver<Event>,
-    /// Unique identifier for tracking events.
     current_task_id: usize,
-    /// Task type for event categorization and logging.
     task_type: &'static str,
-    /// Task execution context providing metadata and runtime configuration.
     _task_context: Arc<flowgen_core::task::context::TaskContext>,
 }
 
@@ -115,8 +111,8 @@ impl EventHandler {
                 }
             }
             _ => {
-                // TODO: Implement Insert, Update, Upsert, Delete, HardDelete operations.
-                todo!("Implement other operations like Insert, Update, Upsert, Delete, HardDelete");
+                // Insert, Update, Upsert, Delete, HardDelete operations not yet implemented.
+                return Err(Error::NotImplemented());
             }
         };
 
@@ -153,6 +149,7 @@ impl EventHandler {
             .task_type(self.task_type)
             .build()
             .map_err(|e| Error::Event { source: e })?;
+
         self.tx
             .send_with_logging(e)
             .map_err(|e| Error::SendMessage { source: e })?;
@@ -168,7 +165,7 @@ impl flowgen_core::task::runner::Runner for JobCreator {
     /// Initializes HTTPS client and creates event handler.
     async fn init(&self) -> Result<EventHandler, Error> {
         let config = self.config.as_ref();
-        // Initialize secure HTTP client (HTTPS only).
+
         let client = reqwest::ClientBuilder::new()
             .https_only(true)
             .build()
@@ -244,7 +241,7 @@ impl flowgen_core::task::runner::Runner for JobCreator {
 
 /// Builder for constructing JobCreator instances.
 #[derive(Default)]
-pub struct ProcessorBuilder {
+pub struct JobCreatorBuilder {
     config: Option<Arc<super::config::JobCreator>>,
     tx: Option<Sender<Event>>,
     rx: Option<Receiver<Event>>,
@@ -253,10 +250,10 @@ pub struct ProcessorBuilder {
     task_type: Option<&'static str>,
 }
 
-impl ProcessorBuilder {
-    /// Creates a new ProcessorBuilder with defaults.
-    pub fn new() -> ProcessorBuilder {
-        ProcessorBuilder {
+impl JobCreatorBuilder {
+    /// Creates a new JobCreatorBuilder with defaults.
+    pub fn new() -> JobCreatorBuilder {
+        JobCreatorBuilder {
             ..Default::default()
         }
     }
@@ -403,10 +400,10 @@ mod tests {
         assert_eq!(err.to_string(), "Missing required attribute: config");
 
         let err = Error::NoSalesforceAuthToken();
-        assert_eq!(err.to_string(), "missing salesforce access token");
+        assert_eq!(err.to_string(), "No salesforce access token provided");
 
         let err = Error::NoSalesforceInstanceURL();
-        assert_eq!(err.to_string(), "missing salesforce instance URL");
+        assert_eq!(err.to_string(), "No salesforce instance URL provided");
     }
 
     #[test]
@@ -418,7 +415,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_processor_builder_new() {
-        let builder = ProcessorBuilder::new();
+        let builder = JobCreatorBuilder::new();
         assert!(builder.config.is_none());
         assert!(builder.tx.is_none());
         assert!(builder.rx.is_none());
@@ -429,7 +426,6 @@ mod tests {
     async fn test_processor_builder_config() {
         let config = Arc::new(super::super::config::JobCreator {
             name: "test_job".to_string(),
-            label: Some("test_label".to_string()),
             credentials_path: PathBuf::from("/test/creds.json"),
             query: Some("SELECT Id FROM Account".to_string()),
             object: None,
@@ -443,7 +439,7 @@ mod tests {
             retry: None,
         });
 
-        let builder = ProcessorBuilder::new().config(Arc::clone(&config));
+        let builder = JobCreatorBuilder::new().config(Arc::clone(&config));
         assert!(builder.config.is_some());
     }
 
@@ -451,7 +447,7 @@ mod tests {
     async fn test_processor_builder_channels() {
         let (tx, rx) = broadcast::channel::<Event>(100);
 
-        let builder = ProcessorBuilder::new().sender(tx.clone()).receiver(rx);
+        let builder = JobCreatorBuilder::new().sender(tx.clone()).receiver(rx);
 
         assert!(builder.tx.is_some());
         assert!(builder.rx.is_some());
@@ -459,7 +455,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_processor_builder_current_task_id() {
-        let builder = ProcessorBuilder::new().current_task_id(5);
+        let builder = JobCreatorBuilder::new().current_task_id(5);
         assert_eq!(builder.current_task_id, 5);
     }
 
@@ -467,7 +463,7 @@ mod tests {
     async fn test_processor_builder_build_missing_config() {
         let (tx, rx) = broadcast::channel::<Event>(100);
 
-        let builder = ProcessorBuilder::new().sender(tx).receiver(rx);
+        let builder = JobCreatorBuilder::new().sender(tx).receiver(rx);
 
         let result = builder.build().await;
         assert!(result.is_err());
@@ -486,7 +482,6 @@ mod tests {
 
         let config = Arc::new(super::super::config::JobCreator {
             name: "test".to_string(),
-            label: None,
             credentials_path: PathBuf::from("/test.json"),
             query: Some("SELECT Id FROM Account".to_string()),
             job_type: super::super::config::JobType::Query,
@@ -500,7 +495,7 @@ mod tests {
             retry: None,
         });
 
-        let builder = ProcessorBuilder::new().config(config).sender(tx);
+        let builder = JobCreatorBuilder::new().config(config).sender(tx);
 
         let result = builder.build().await;
         assert!(result.is_err());
@@ -519,7 +514,6 @@ mod tests {
 
         let config = Arc::new(super::super::config::JobCreator {
             name: "test".to_string(),
-            label: None,
             credentials_path: PathBuf::from("/test.json"),
             query: Some("SELECT Id FROM Account".to_string()),
             job_type: super::super::config::JobType::Query,
@@ -533,7 +527,7 @@ mod tests {
             retry: None,
         });
 
-        let builder = ProcessorBuilder::new().config(config).receiver(rx);
+        let builder = JobCreatorBuilder::new().config(config).receiver(rx);
 
         let result = builder.build().await;
         assert!(result.is_err());
@@ -595,8 +589,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_builder_default_trait() {
-        let builder1 = ProcessorBuilder::new();
-        let builder2 = ProcessorBuilder::default();
+        let builder1 = JobCreatorBuilder::new();
+        let builder2 = JobCreatorBuilder::default();
 
         assert_eq!(builder1.current_task_id, builder2.current_task_id);
     }
@@ -632,7 +626,6 @@ mod tests {
 
         let config = Arc::new(super::super::config::JobCreator {
             name: "struct_test".to_string(),
-            label: None,
             credentials_path: PathBuf::from("/test.json"),
             query: Some("SELECT Id FROM Account".to_string()),
             job_type: super::super::config::JobType::Query,
