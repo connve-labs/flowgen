@@ -303,6 +303,15 @@ impl ProcessorBuilder {
         self
     }
 
+    /// Sets the task context.
+    pub fn task_context(
+        mut self,
+        task_context: Arc<flowgen_core::task::context::TaskContext>,
+    ) -> Self {
+        self.task_context = Some(task_context);
+        self
+    }
+
     /// Builds JobCreator after validating required fields.
     pub async fn build(self) -> Result<JobCreator, Error> {
         Ok(JobCreator {
