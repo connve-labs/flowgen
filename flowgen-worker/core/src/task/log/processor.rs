@@ -17,6 +17,11 @@ pub enum Error {
         #[source]
         source: Box<tokio::sync::broadcast::error::SendError<Event>>,
     },
+    #[error("Event builder failed with error: {source}")]
+    EventBuilder {
+        #[source]
+        source: crate::event::Error,
+    },
     #[error("Missing required builder attribute: {}", _0)]
     MissingRequiredAttribute(String),
     #[error("Task failed after all retry attempts: {source}")]
@@ -107,7 +112,15 @@ impl EventHandler {
             }
         }
 
-        // Pass the event through to the next task
+        // Pass the event through to the next task with updated task_id
+        let event = crate::event::EventBuilder::new()
+            .data(event.data)
+            .subject(event.subject)
+            .task_id(self.task_id)
+            .task_type(event.task_type)
+            .build()
+            .map_err(|source| Error::EventBuilder { source })?;
+
         self.tx
             .send_with_logging(event)
             .map_err(|source| Error::SendMessage { source })?;

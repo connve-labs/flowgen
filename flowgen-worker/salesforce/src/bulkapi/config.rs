@@ -573,11 +573,11 @@ mod tests {
     #[test]
     fn test_debug_implementations() {
         let creator = JobCreator::default();
-        let debug_str = format!("{:?}", creator);
+        let debug_str = format!("{creator:?}");
         assert!(debug_str.contains("JobCreator"));
 
         let retriever = JobRetriever::default();
-        let debug_str = format!("{:?}", retriever);
+        let debug_str = format!("{retriever:?}");
         assert!(debug_str.contains("JobRetriever"));
     }
 }
