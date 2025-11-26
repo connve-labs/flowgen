@@ -38,6 +38,8 @@ pub struct JobRetriever {
     pub credentials_path: PathBuf,
     /// Salesforce Job Type like query, ingest.
     pub job_type: JobType,
+    #[serde(default)]
+    pub retry: Option<flowgen_core::retry::RetryConfig>,
 }
 
 /// Configuration for creating new Salesforce bulk jobs.
@@ -174,6 +176,7 @@ mod tests {
             name: "test_job_retriever".to_string(),
             credentials_path: PathBuf::from("/path/to/creds.json"),
             job_type: JobType::Query,
+            retry: None,
         };
         assert_eq!(
             retriever.credentials_path,
@@ -187,6 +190,7 @@ mod tests {
             name: "test_job_retriever".to_string(),
             credentials_path: PathBuf::from("/test/path.json"),
             job_type: JobType::Query,
+            retry: None,
         };
 
         let json = serde_json::to_string(&retriever).unwrap();
@@ -506,6 +510,7 @@ mod tests {
             name: "test_job_retriever".to_string(),
             credentials_path: PathBuf::from("/test.json"),
             job_type: JobType::Query,
+            retry: None,
         };
 
         let retriever2 = retriever1.clone();

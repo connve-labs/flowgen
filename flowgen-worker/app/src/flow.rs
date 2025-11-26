@@ -681,13 +681,17 @@ async fn spawn_tasks(
                 let rx = tx.subscribe();
                 let tx = tx.clone();
                 let span = tracing::Span::current();
+                let task_type = task.as_str();
+                let task_context = Arc::clone(task_context);
                 let task: JoinHandle<Result<(), Error>> = tokio::spawn(
                     async move {
                         flowgen_salesforce::bulkapi::job_retriever::JobRetrieverBuilder::new()
                             .config(config)
                             .receiver(rx)
                             .sender(tx)
+                            .task_type(task_type)
                             .task_id(i)
+                            .task_context(task_context)
                             .build()
                             .await?
                             .run()

@@ -54,6 +54,11 @@ pub enum Error {
         #[source]
         source: apache_avro::Error,
     },
+    #[error("Task failed after all retry attempts: {source}")]
+    RetryExhausted {
+        #[source]
+        source: Box<Error>,
+    },
 }
 
 /// Salesforce job metadata API response.
@@ -65,16 +70,12 @@ struct JobResponse {
 
 /// Processor for retrieving Salesforce bulk job results.
 pub struct JobRetriever {
-    /// Job configuration and authentication details.
     config: Arc<super::config::JobRetriever>,
-    /// Broadcast sender for emitting Arrow record batches.
     tx: Sender<Event>,
-    /// Broadcast receiver for incoming Avro events.
     rx: Receiver<Event>,
-    /// Unique identifier for tracking events.
     task_id: usize,
-    /// Task type for event categorization and logging.
     task_type: &'static str,
+    _task_context: Arc<flowgen_core::task::context::TaskContext>,
 }
 
 /// Event handler for processing individual job retrieval requests.
@@ -201,6 +202,7 @@ pub struct JobRetrieverBuilder {
     tx: Option<Sender<Event>>,
     rx: Option<Receiver<Event>>,
     task_id: usize,
+    task_context: Option<Arc<flowgen_core::task::context::TaskContext>>,
     task_type: Option<&'static str>,
 }
 
@@ -238,11 +240,29 @@ impl flowgen_core::task::runner::Runner for JobRetriever {
 
     #[tracing::instrument(skip(self), name = DEFAULT_MESSAGE_SUBJECT, fields( task_id = self.task_id))]
     async fn run(mut self) -> Result<(), Self::Error> {
+        let retry_config =
+            flowgen_core::retry::RetryConfig::merge(&self._task_context.retry, &self.config.retry);
+
         // Initialize runner task.
-        let event_handler = match self.init().await {
+        let event_handler = match tokio_retry::Retry::spawn(retry_config.strategy(), || async {
+            match self.init().await {
+                Ok(handler) => Ok(handler),
+                Err(e) => {
+                    error!("{}", e);
+                    Err(e)
+                }
+            }
+        })
+        .await
+        {
             Ok(handler) => Arc::new(handler),
             Err(e) => {
-                error!("{}", e);
+                error!(
+                    "{}",
+                    Error::RetryExhausted {
+                        source: Box::new(e)
+                    }
+                );
                 return Ok(());
             }
         };
@@ -299,9 +319,17 @@ impl JobRetrieverBuilder {
         self
     }
 
-    /// Sets the task type.
     pub fn task_type(mut self, task_type: &'static str) -> Self {
         self.task_type = Some(task_type);
+        self
+    }
+
+    /// Sets the task context.
+    pub fn task_context(
+        mut self,
+        task_context: Arc<flowgen_core::task::context::TaskContext>,
+    ) -> Self {
+        self.task_context = Some(task_context);
         self
     }
 
@@ -318,6 +346,9 @@ impl JobRetrieverBuilder {
                 .tx
                 .ok_or_else(|| Error::MissingRequiredAttribute("sender".to_string()))?,
             task_id: self.task_id,
+            _task_context: self
+                .task_context
+                .ok_or_else(|| Error::MissingRequiredAttribute("task_context".to_string()))?,
             task_type: self
                 .task_type
                 .ok_or_else(|| Error::MissingRequiredAttribute("task_type".to_string()))?,
