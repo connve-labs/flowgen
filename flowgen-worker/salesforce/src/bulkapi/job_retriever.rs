@@ -8,7 +8,7 @@ use std::fs::File;
 use std::io::{Seek, Write};
 use std::sync::Arc;
 use tokio::sync::broadcast::{Receiver, Sender};
-use tracing::{error, Instrument, info};
+use tracing::{error, info, Instrument};
 
 /// Message subject prefix for bulk API retrieve operations.
 const DEFAULT_MESSAGE_SUBJECT: &str = "salesforce_query_job_retrieve";
@@ -61,8 +61,6 @@ pub enum Error {
         #[source]
         source: Box<Error>,
     },
-    #[error("Format not supported")]
-    FormatNotSupported(),
 }
 
 /// Salesforce job metadata API response.
@@ -89,7 +87,7 @@ pub struct EventHandler {
     /// Channel sender for emitting processed data.
     tx: Sender<Event>,
     /// Task identifier for event correlation.
-    current_task_id: usize,
+    task_id: usize,
     /// Processor configuration.
     config: Arc<super::config::JobRetriever>,
     /// SFDC client.
@@ -120,7 +118,9 @@ impl EventHandler {
                             Value::String(s) => Some(s.clone()),
                             _ => None,
                         })
-                        .unwrap_or("No JobIdentifier available, job may still be processing".to_string());
+                        .unwrap_or(
+                            "No JobIdentifier available, job may still be processing".to_string(),
+                        );
 
                     // Extract ResultUrl
                     let result_url = fields
@@ -134,7 +134,9 @@ impl EventHandler {
                             },
                             _ => None,
                         })
-                        .unwrap_or("No ResultUrl available, job may still be processing".to_string());
+                        .unwrap_or(
+                            "No ResultUrl available, job may still be processing".to_string(),
+                        );
 
                     let instance_url = self
                         .sfdc_client
@@ -216,7 +218,7 @@ impl EventHandler {
                                 data.map_err(|e| Error::Arrow { source: e })?,
                             ))
                             .subject(job_metadata.object.to_lowercase())
-                            .task_id(self.current_task_id)
+                            .task_id(self.task_id)
                             .task_type(self.task_type)
                             .build()?;
                         self.tx
@@ -269,7 +271,7 @@ impl flowgen_core::task::runner::Runner for JobRetriever {
 
         let event_handler = EventHandler {
             config: Arc::clone(&self.config),
-            current_task_id: self.task_id,
+            task_id: self.task_id,
             tx: self.tx.clone(),
             client,
             sfdc_client,
@@ -328,7 +330,7 @@ impl flowgen_core::task::runner::Runner for JobRetriever {
 }
 
 impl JobRetrieverBuilder {
-    /// Creates a new ProcessorBuilder with defaults.
+    /// Creates a new JobRetrieverBuilder with defaults.
     pub fn new() -> JobRetrieverBuilder {
         JobRetrieverBuilder {
             ..Default::default()
@@ -393,5 +395,143 @@ impl JobRetrieverBuilder {
                 .task_type
                 .ok_or_else(|| Error::MissingRequiredAttribute("task_type".to_string()))?,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use apache_avro::Schema;
+    use serde_json::Map;
+    use std::sync::Arc;
+    use tokio::sync::broadcast;
+
+    /// Creates a mock TaskContext for testing.
+    fn create_mock_task_context() -> Arc<flowgen_core::task::context::TaskContext> {
+        let mut labels = Map::new();
+        labels.insert(
+            "description".to_string(),
+            serde_json::Value::String("Clone Test".to_string()),
+        );
+        let task_manager = Arc::new(flowgen_core::task::manager::TaskManagerBuilder::new().build());
+        Arc::new(
+            flowgen_core::task::context::TaskContextBuilder::new()
+                .flow_name("test-flow".to_string())
+                .flow_labels(Some(labels))
+                .task_manager(task_manager)
+                .build()
+                .unwrap(),
+        )
+    }
+
+    // Helper function to create test configuration
+    fn create_test_config() -> Arc<super::super::config::JobRetriever> {
+        Arc::new(super::super::config::JobRetriever {
+            name: "test_job_retriever".to_string(),
+            credentials_path: std::path::PathBuf::from("/tmp/test_creds.json"),
+            job_type: crate::bulkapi::config::JobType::Query,
+            retry: None,
+        })
+    }
+
+    // Helper function to create test Avro schema
+    fn create_avro_schema() -> String {
+        r#"{
+            "type": "record",
+            "name": "BulkApi2JobEvent",
+            "namespace": "com.sforce.eventbus",
+            "fields": [
+                {"name": "CreatedDate", "type": "long"},
+                {"name": "CreatedById", "type": "string"},
+                {"name": "Type", "type": "string"},
+                {"name": "JobIdentifier", "type": "string"},
+                {"name": "JobState", "type": ["null", "string"], "default": null},
+                {"name": "ResultType", "type": ["null", "string"], "default": null},
+                {"name": "ResultUrl", "type": ["null", "string"], "default": null}
+            ]
+        }"#
+        .to_string()
+    }
+
+    #[test]
+    fn test_job_retriever_builder_success() {
+        let config = create_test_config();
+        let (tx, _rx) = broadcast::channel(10);
+        let (_tx2, rx) = broadcast::channel(10);
+        let task_context = create_mock_task_context();
+
+        let builder = JobRetrieverBuilder::new()
+            .config(config)
+            .sender(tx)
+            .receiver(rx)
+            .task_id(1)
+            .task_type("test_task")
+            .task_context(task_context);
+
+        let result = tokio_test::block_on(builder.build());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_job_retriever_builder_missing_sender() {
+        let config = create_test_config();
+        let (_tx, rx) = broadcast::channel(10);
+        let task_context = create_mock_task_context();
+
+        let builder = JobRetrieverBuilder::new()
+            .config(config)
+            .receiver(rx)
+            .task_id(1)
+            .task_type("test_task")
+            .task_context(task_context);
+
+        let result = tokio_test::block_on(builder.build());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_job_retriever_builder_missing_receiver() {
+        let config = create_test_config();
+        let (tx, _rx) = broadcast::channel(10);
+        let task_context = create_mock_task_context();
+
+        let builder = JobRetrieverBuilder::new()
+            .config(config)
+            .sender(tx)
+            .task_id(1)
+            .task_type("test_task")
+            .task_context(task_context);
+
+        let result = tokio_test::block_on(builder.build());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_avro_schema_parsing() {
+        let schema_str = create_avro_schema();
+        let result = Schema::parse_str(&schema_str);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_job_response_deserialization() {
+        let json = r#"{"object":"Account"}"#;
+        let result: Result<JobResponse, _> = serde_json::from_str(json);
+
+        assert!(result.is_ok());
+        let job_response = result.unwrap();
+        assert_eq!(job_response.object, "Account");
+    }
+    #[test]
+    fn test_error_display() {
+        let io_error = Error::IO {
+            source: std::io::Error::new(std::io::ErrorKind::NotFound, "file not found"),
+        };
+        assert!(io_error.to_string().contains("IO operation failed"));
+
+        let missing_attr_error = Error::MissingRequiredAttribute("config".to_string());
+        assert!(missing_attr_error
+            .to_string()
+            .contains("Missing required attribute"));
     }
 }
