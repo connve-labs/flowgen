@@ -4,9 +4,12 @@
 //! with optional message content and count limits for testing and simulation workflows.
 
 use crate::event::{Event, EventBuilder, EventData, SenderExt};
+use chrono::DateTime;
+use croner::Cron;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
+    str::FromStr,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -45,12 +48,27 @@ pub enum Error {
         #[source]
         source: std::time::SystemTimeError,
     },
+    #[error("Invalid timestamp: {0}")]
+    InvalidTimestamp(i64),
     #[error("Missing required builder attribute: {}", _0)]
     MissingRequiredAttribute(String),
     #[error("Task failed after all retry attempts: {source}")]
     RetryExhausted {
         #[source]
         source: Box<Error>,
+    },
+    #[error("Invalid cron expression '{expression}': {source}")]
+    InvalidCron {
+        expression: String,
+        #[source]
+        source: croner::errors::CronError,
+    },
+    #[error("Cron schedule has no next occurrence")]
+    CronNoNextOccurrence,
+    #[error("Configuration validation failed: {source}")]
+    ConfigValidation {
+        #[source]
+        source: crate::task::generate::config::ConfigError,
     },
 }
 /// Event handler for generating scheduled events.
@@ -63,6 +81,37 @@ pub struct EventHandler {
 }
 
 impl EventHandler {
+    /// Calculate next run time based on interval or cron schedule.
+    fn calculate_next_run(&self, now: u64, last_run: Option<u64>) -> Result<u64, Error> {
+        match (&self.config.interval, &self.config.cron) {
+            // Use interval if it's configured.
+            (Some(interval), _) => Ok(last_run.map(|t| t + interval.as_secs()).unwrap_or(now)),
+            // Use cron expression if it's configured.
+            (None, Some(cron_expr)) => {
+                let cron = Cron::from_str(cron_expr).map_err(|e| Error::InvalidCron {
+                    expression: cron_expr.clone(),
+                    source: e,
+                })?;
+
+                let datetime = DateTime::from_timestamp(now as i64, 0)
+                    .ok_or_else(|| Error::InvalidTimestamp(now as i64))?;
+
+                let next = cron.find_next_occurrence(&datetime, false).map_err(|e| {
+                    Error::InvalidCron {
+                        expression: cron_expr.clone(),
+                        source: e,
+                    }
+                })?;
+
+                Ok(next.timestamp() as u64)
+            }
+            // If none configured, return error.
+            (None, None) => Err(Error::ConfigValidation {
+                source: crate::task::generate::config::ConfigError::MissingSchedule,
+            }),
+        }
+    }
+
     /// Generates events at scheduled intervals.
     async fn handle(&self) -> Result<(), Error> {
         let mut counter = 0;
@@ -79,26 +128,24 @@ impl EventHandler {
         );
 
         loop {
-            // Calculate when the next event should be generated.
+            // Calcualate now timestamp.
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map_err(|e| Error::SystemTime { source: e })?
                 .as_secs();
 
-            let next_run_time = if let Some(cache) = cache {
-                match cache.get(&cache_key).await {
-                    Ok(cached_bytes) => {
-                        let cached_str = String::from_utf8_lossy(&cached_bytes);
-                        match cached_str.parse::<u64>() {
-                            Ok(last_run) => last_run + self.config.interval,
-                            Err(_) => now, // Invalid cache, run immediately.
-                        }
-                    }
-                    Err(_) => now, // No cache entry, run immediately.
-                }
-            } else {
-                now // No cache available, run immediately.
+            // Get last_run from cache or return none.
+            let last_run = match cache {
+                Some(c) => c
+                    .get(&cache_key)
+                    .await
+                    .ok()
+                    .and_then(|bytes| String::from_utf8_lossy(&bytes).parse::<u64>().ok()),
+                None => None,
             };
+
+            // Calculate next run time for internval or cron.
+            let next_run_time = self.calculate_next_run(now, last_run)?;
 
             // Sleep until it's time to generate the next event.
             if next_run_time > now {
@@ -106,38 +153,25 @@ impl EventHandler {
                 time::sleep(Duration::from_secs(sleep_duration)).await;
             }
 
-            // Get last_run_time from cache for system info
-            let last_run_time = if let Some(cache) = cache {
-                match cache.get(&cache_key).await {
-                    Ok(cached_bytes) => {
-                        let cached_str = String::from_utf8_lossy(&cached_bytes);
-                        cached_str.parse::<u64>().ok()
-                    }
-                    Err(_) => None,
-                }
-            } else {
-                None
-            };
-
             // Determine if there will be a next run
             let next_run_time_val = match self.config.count {
-                Some(count) if count == counter + 1 => None, // This is the last run
+                Some(count) if count == counter + 1 => None,
                 _ => {
                     let current_time = SystemTime::now()
                         .duration_since(UNIX_EPOCH)
                         .map_err(|e| Error::SystemTime { source: e })?
                         .as_secs();
-                    Some(current_time + self.config.interval)
+                    Some(self.calculate_next_run(current_time, Some(current_time))?)
                 }
             };
 
-            // Create system information
+            // Create system information.
             let system_info = SystemInfo {
-                last_run_time,
+                last_run_time: last_run,
                 next_run_time: next_run_time_val,
             };
 
-            // Prepare message data with system information
+            // Prepare message data with system information.
             let data = match &self.config.message {
                 Some(message) => {
                     json!({
@@ -152,6 +186,17 @@ impl EventHandler {
                 }
             };
 
+            // Update cache with next_run_time before sending the event.
+            if let Some(cache) = cache {
+                if let Err(cache_err) = cache
+                    .put(&cache_key, next_run_time.to_string().into())
+                    .await
+                {
+                    // Log warn for cache errors.
+                    warn!("Failed to update cache: {:?}", cache_err);
+                }
+            }
+
             // Build and send event.
             let e = EventBuilder::new()
                 .data(EventData::Json(data))
@@ -163,19 +208,6 @@ impl EventHandler {
             self.tx
                 .send_with_logging(e)
                 .map_err(|source| Error::SendMessage { source })?;
-
-            // Update cache with current time after sending the event.
-            let current_time = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_err(|e| Error::SystemTime { source: e })?
-                .as_secs();
-            if let Some(cache) = cache {
-                if let Err(cache_err) = cache.put(&cache_key, current_time.to_string().into()).await
-                {
-                    // Log warn for cache errors.
-                    warn!("Failed to update cache: {:?}", cache_err);
-                }
-            }
 
             counter += 1;
             match self.config.count {
@@ -207,6 +239,10 @@ impl crate::task::runner::Runner for Subscriber {
     type EventHandler = EventHandler;
 
     async fn init(&self) -> Result<Self::EventHandler, Self::Error> {
+        self.config
+            .validate()
+            .map_err(|source| Error::ConfigValidation { source })?;
+
         Ok(EventHandler {
             config: Arc::clone(&self.config),
             tx: self.tx.clone(),
@@ -221,6 +257,7 @@ impl crate::task::runner::Runner for Subscriber {
         let retry_config =
             crate::retry::RetryConfig::merge(&self.task_context.retry, &self.config.retry);
 
+        // Spawn task init.
         let event_handler = match tokio_retry::Retry::spawn(retry_config.strategy(), || async {
             match self.init().await {
                 Ok(handler) => Ok(handler),
@@ -418,7 +455,8 @@ mod tests {
         let config = Arc::new(crate::task::generate::config::Subscriber {
             name: "test".to_string(),
             message: Some("test message".to_string()),
-            interval: 1,
+            interval: Some(Duration::from_secs(1)),
+            cron: None,
             count: Some(1),
             retry: None,
         });
@@ -453,7 +491,8 @@ mod tests {
         let config = Arc::new(crate::task::generate::config::Subscriber {
             name: "test".to_string(),
             message: Some("test message".to_string()),
-            interval: 0,
+            interval: Some(Duration::from_secs(0)),
+            cron: None,
             count: Some(2),
             retry: None,
         });
@@ -489,7 +528,8 @@ mod tests {
         let config = Arc::new(crate::task::generate::config::Subscriber {
             name: "test".to_string(),
             message: Some("custom message".to_string()),
-            interval: 0,
+            interval: Some(Duration::from_secs(0)),
+            cron: None,
             count: Some(1),
             retry: None,
         });
@@ -527,7 +567,8 @@ mod tests {
         let config = Arc::new(crate::task::generate::config::Subscriber {
             name: "test".to_string(),
             message: None,
-            interval: 1,    // Short interval for testing
+            interval: Some(Duration::from_secs(1)),
+            cron: None,
             count: Some(1), // Only run once
             retry: None,
         });

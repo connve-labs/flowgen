@@ -709,6 +709,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "croner"
+version = "3.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4aa42bcd3d846ebf66e15bd528d1087f75d1c6c1c66ebff626178a106353c576"
+dependencies = [
+ "chrono",
+ "derive_builder",
+ "strum",
+]
+
+[[package]]
 name = "crossbeam-utils"
 version = "0.8.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1104,7 +1115,7 @@ dependencies = [
 
 [[package]]
 name = "flowgen_core"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "apache-avro",
  "arrow",
@@ -1114,8 +1125,10 @@ dependencies = [
  "bincode",
  "bytes",
  "chrono",
+ "croner",
  "futures-util",
  "handlebars",
+ "humantime-serde",
  "k8s-openapi",
  "kube",
  "regex",
@@ -1133,7 +1146,7 @@ dependencies = [
 
 [[package]]
 name = "flowgen_http"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "arrow-json",
  "async-trait",
@@ -1154,7 +1167,7 @@ dependencies = [
 
 [[package]]
 name = "flowgen_nats"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "arrow",
  "async-nats",
@@ -1181,7 +1194,7 @@ dependencies = [
 
 [[package]]
 name = "flowgen_object_store"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "apache-avro",
  "arrow",
@@ -1202,7 +1215,7 @@ dependencies = [
 
 [[package]]
 name = "flowgen_salesforce"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "apache-avro",
  "arrow",
@@ -1230,7 +1243,7 @@ dependencies = [
 
 [[package]]
 name = "flowgen_worker"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "arrow",
  "config",
@@ -3772,6 +3785,9 @@ name = "strum"
 version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af23d6f6c1a224baef9d3f61e287d2761385a5b88fdab4eb4c6f11aeb54c4bcf"
+dependencies = [
+ "strum_macros",
+]
 
 [[package]]
 name = "strum_macros"

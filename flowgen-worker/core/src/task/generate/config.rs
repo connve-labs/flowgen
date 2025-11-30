@@ -4,21 +4,55 @@
 //! synthetic or scheduled data streams in workflows.
 
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
+
+/// Errors that can occur during configuration validation.
+#[derive(thiserror::Error, Debug)]
+pub enum ConfigError {
+    #[error("Either 'interval' or 'cron' params must be specified")]
+    MissingSchedule,
+    #[error("Cannot specify both 'interval' and 'cron' params")]
+    BothSchedulesSpecified,
+}
 
 /// Configuration for generate subscriber tasks that produce scheduled events.
-#[derive(PartialEq, Clone, Debug, Default, Deserialize, Serialize, Hash)]
+#[derive(PartialEq, Clone, Debug, Deserialize, Serialize, Hash, Default)]
 pub struct Subscriber {
     /// The unique name / identifier of the task.
     pub name: String,
     /// Optional message content for generated events.
     pub message: Option<String>,
-    /// Interval between generated events in milliseconds.
-    pub interval: u64,
+    /// Interval - runs IMMEDIATELY then repeats every duration.
+    /// Accepts duration strings: "100ms", "30s", "5m", etc.
+    /// Mutually exclusive with `cron`.
+    #[serde(default, with = "humantime_serde")]
+    pub interval: Option<Duration>,
+    /// Cron expression for calendar-based scheduling.
+    /// First event fires at the NEXT time matching the cron expression.
+    /// Uses standard cron syntax: "MIN HOUR DAY MONTH WEEKDAY"
+    /// Examples:
+    ///   - "0 0 * * *" = Daily at midnight
+    ///   - "*/5 * * * *" = Every 5 minutes
+    ///   - "0 9-17 * * MON-FRI" = Hourly during business hours weekdays
+    ///
+    /// Mutually exclusive with `interval`.
+    pub cron: Option<String>,
     /// Optional maximum number of events to generate before stopping.
     pub count: Option<u64>,
     /// Optional retry configuration (overrides app-level retry config).
     #[serde(default)]
     pub retry: Option<crate::retry::RetryConfig>,
+}
+
+impl Subscriber {
+    /// Validates that exactly one scheduling method is specified.
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        match (&self.interval, &self.cron) {
+            (None, None) => Err(ConfigError::MissingSchedule),
+            (Some(_), Some(_)) => Err(ConfigError::BothSchedulesSpecified),
+            _ => Ok(()),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -30,25 +64,79 @@ mod tests {
         let config = Subscriber::default();
         assert_eq!(config.name, String::new());
         assert!(config.message.is_none());
-        assert_eq!(config.interval, 0);
+        assert!(config.interval.is_none());
+        assert!(config.cron.is_none());
         assert!(config.count.is_none());
         assert!(config.retry.is_none());
     }
 
     #[test]
-    fn test_subscriber_config_creation() {
+    fn test_subscriber_config_with_interval() {
         let config = Subscriber {
             name: "test_task_name".to_string(),
             message: Some("test message".to_string()),
-            interval: 5000,
+            interval: Some(Duration::from_secs(5)),
+            cron: None,
             count: Some(10),
             retry: None,
         };
 
-        assert_eq!(config.name, "test_task_name".to_string());
+        assert_eq!(config.name, "test_task_name");
         assert_eq!(config.message, Some("test message".to_string()));
-        assert_eq!(config.interval, 5000);
+        assert_eq!(config.interval, Some(Duration::from_secs(5)));
+        assert!(config.cron.is_none());
         assert_eq!(config.count, Some(10));
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_subscriber_config_with_cron() {
+        let config = Subscriber {
+            name: "cron_task".to_string(),
+            message: None,
+            interval: None,
+            cron: Some("0 0 * * *".to_string()),
+            count: None,
+            retry: None,
+        };
+
+        assert_eq!(config.cron, Some("0 0 * * *".to_string()));
+        assert!(config.interval.is_none());
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validation_both_specified() {
+        let config = Subscriber {
+            name: "test".to_string(),
+            message: None,
+            interval: Some(Duration::from_secs(60)),
+            cron: Some("0 0 * * *".to_string()),
+            count: None,
+            retry: None,
+        };
+
+        assert!(matches!(
+            config.validate(),
+            Err(ConfigError::BothSchedulesSpecified)
+        ));
+    }
+
+    #[test]
+    fn test_validation_neither_specified() {
+        let config = Subscriber {
+            name: "test".to_string(),
+            message: None,
+            interval: None,
+            cron: None,
+            count: None,
+            retry: None,
+        };
+
+        assert!(matches!(
+            config.validate(),
+            Err(ConfigError::MissingSchedule)
+        ));
     }
 
     #[test]
@@ -56,7 +144,8 @@ mod tests {
         let config = Subscriber {
             name: "serialize_test".to_string(),
             message: None,
-            interval: 1000,
+            interval: Some(Duration::from_secs(1)),
+            cron: None,
             count: Some(5),
             retry: None,
         };
@@ -72,7 +161,8 @@ mod tests {
         let config = Subscriber {
             name: "clone_test".to_string(),
             message: Some("clone message".to_string()),
-            interval: 2000,
+            interval: Some(Duration::from_secs(2)),
+            cron: None,
             count: None,
             retry: None,
         };
