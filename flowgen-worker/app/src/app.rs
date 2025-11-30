@@ -33,9 +33,9 @@ pub enum Error {
         #[source]
         source: config::ConfigError,
     },
-    /// Flow directory path is invalid or cannot be converted to string.
-    #[error("Invalid path")]
-    InvalidPath,
+    /// Flow path is missing or invalid.
+    #[error("Flow path is not configured or invalid. Please set 'flows.path' in your configuration (e.g., flows.path: \"/etc/app/flows/*.yaml\")")]
+    InvalidFlowsPath,
     /// Kubernetes host creation error.
     #[error("Failed to create Kubernetes host: {source}")]
     Kube {
@@ -67,10 +67,10 @@ impl App {
 
         let glob_pattern = app_config
             .flows
-            .dir
+            .path
             .as_ref()
             .and_then(|path| path.to_str())
-            .ok_or(Error::InvalidPath)?;
+            .ok_or(Error::InvalidFlowsPath)?;
 
         let flow_configs: Vec<FlowConfig> = glob::glob(glob_pattern)
             .map_err(|e| Error::Pattern { source: e })?

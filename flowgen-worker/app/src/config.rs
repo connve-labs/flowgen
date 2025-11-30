@@ -138,8 +138,8 @@ pub struct CacheOptions {
 /// Flow loading configuration.
 #[derive(PartialEq, Clone, Debug, Deserialize, Serialize)]
 pub struct FlowOptions {
-    /// Directory pattern for discovering flow configuration files.
-    pub dir: Option<PathBuf>,
+    /// Path pattern for discovering flow configuration files (glob pattern supported).
+    pub path: Option<PathBuf>,
 }
 
 /// HTTP server configuration options.
@@ -303,7 +303,7 @@ mod tests {
                 db_name: None,
             }),
             flows: FlowOptions {
-                dir: Some(PathBuf::from("/test/flows/*")),
+                path: Some(PathBuf::from("/test/flows/*")),
             },
             http_server: None,
             host: None,
@@ -313,7 +313,7 @@ mod tests {
 
         assert!(app_config.cache.is_some());
         assert!(app_config.cache.as_ref().unwrap().enabled);
-        assert!(app_config.flows.dir.is_some());
+        assert!(app_config.flows.path.is_some());
         assert!(app_config.http_server.is_none());
         assert!(app_config.host.is_none());
         assert!(app_config.retry.is_none());
@@ -324,7 +324,7 @@ mod tests {
         let app_config = AppConfig {
             cache: None,
             flows: FlowOptions {
-                dir: Some(PathBuf::from("/flows/*")),
+                path: Some(PathBuf::from("/flows/*")),
             },
             http_server: None,
             host: None,
@@ -333,7 +333,7 @@ mod tests {
         };
 
         assert!(app_config.cache.is_none());
-        assert!(app_config.flows.dir.is_some());
+        assert!(app_config.flows.path.is_some());
     }
 
     #[test]
@@ -346,7 +346,7 @@ mod tests {
                 db_name: Some("test_db".to_string()),
             }),
             flows: FlowOptions {
-                dir: Some(PathBuf::from("/serialize/flows/*")),
+                path: Some(PathBuf::from("/serialize/flows/*")),
             },
             http_server: None,
             host: None,
@@ -368,7 +368,7 @@ mod tests {
                 credentials_path: PathBuf::from("/clone/cache"),
                 db_name: None,
             }),
-            flows: FlowOptions { dir: None },
+            flows: FlowOptions { path: None },
             http_server: None,
             host: None,
             event_buffer_size: None,
@@ -426,29 +426,29 @@ mod tests {
     }
 
     #[test]
-    fn test_flow_options_with_dir() {
+    fn test_flow_options_with_path() {
         let flow_options = FlowOptions {
-            dir: Some(PathBuf::from("/test/flows/*.toml")),
+            path: Some(PathBuf::from("/test/flows/*.toml")),
         };
 
-        assert!(flow_options.dir.is_some());
+        assert!(flow_options.path.is_some());
         assert_eq!(
-            flow_options.dir.unwrap(),
+            flow_options.path.unwrap(),
             PathBuf::from("/test/flows/*.toml")
         );
     }
 
     #[test]
-    fn test_flow_options_without_dir() {
-        let flow_options = FlowOptions { dir: None };
+    fn test_flow_options_without_path() {
+        let flow_options = FlowOptions { path: None };
 
-        assert!(flow_options.dir.is_none());
+        assert!(flow_options.path.is_none());
     }
 
     #[test]
     fn test_flow_options_serialization() {
         let flow_options = FlowOptions {
-            dir: Some(PathBuf::from("/serialize/flows/*.toml")),
+            path: Some(PathBuf::from("/serialize/flows/*.toml")),
         };
 
         let serialized = serde_json::to_string(&flow_options).unwrap();
@@ -515,7 +515,7 @@ mod tests {
     fn test_app_config_with_http_server_options() {
         let app_config = AppConfig {
             cache: None,
-            flows: FlowOptions { dir: None },
+            flows: FlowOptions { path: None },
             http_server: Some(HttpServerOptions {
                 enabled: true,
                 port: Some(8080),
